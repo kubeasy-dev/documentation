@@ -1,0 +1,451 @@
+---
+title: Contributing Guidelines
+description: Guidelines and best practices for contributing challenges to Kubeasy.
+---
+
+Thank you for contributing to Kubeasy! This guide explains how to submit high-quality challenges that provide a great learning experience.
+
+## Before you start
+
+### Check existing challenges
+
+Browse the [challenges repository](https://github.com/kubeasy-dev/challenges) to:
+
+- Avoid duplicating existing challenges
+- Understand the current challenge structure
+- Get inspiration from well-designed challenges
+
+### Propose your idea
+
+Before investing time in building a challenge, open a **GitHub Issue** to discuss your idea:
+
+1. Go to [kubeasy-dev/challenges/issues](https://github.com/kubeasy-dev/challenges/issues)
+2. Create a new issue with the **"Challenge Proposal"** template
+3. Describe:
+   - What Kubernetes concept it teaches
+   - The broken scenario
+   - Why it's valuable to learn
+   - Estimated difficulty and time
+
+This helps avoid duplicate work and ensures your challenge aligns with Kubeasy's goals.
+
+## Contribution process
+
+### 1. Fork and clone
+
+```bash
+# Fork the repository on GitHub, then:
+git clone https://github.com/<your-username>/challenges.git
+cd challenges
+```
+
+### 2. Create a branch
+
+```bash
+git checkout -b challenge/<challenge-slug>
+```
+
+Use descriptive branch names:
+- `challenge/rbac-service-account`
+- `challenge/network-policy-egress`
+- `challenge/pvc-storage-class`
+
+### 3. Build the challenge
+
+Follow the structure described in [Challenge Structure](/docs/developer/challenge-structure) and [Creating Challenges](/docs/developer/creating-challenge).
+
+### 4. Test thoroughly
+
+See [Testing Challenges](/docs/developer/testing-challenges) for comprehensive testing strategies.
+
+Minimum testing requirements:
+
+- [ ] Challenge works on a fresh Kind cluster
+- [ ] Problem is reproducible
+- [ ] Solution passes all validation checks
+- [ ] Validation provides clear feedback
+- [ ] Estimated time is accurate
+
+### 5. Commit your changes
+
+Use clear, descriptive commit messages:
+
+```bash
+git add .
+git commit -m "Add challenge: RBAC Service Account Permissions"
+```
+
+Follow conventional commit style:
+- `feat: Add challenge for network policies`
+- `fix: Correct validation timeout in RBAC challenge`
+- `docs: Improve README for storage class challenge`
+
+### 6. Push and create a pull request
+
+```bash
+git push origin challenge/<challenge-slug>
+```
+
+Open a pull request on GitHub using the **"Challenge Submission"** template.
+
+## Pull request requirements
+
+### PR title format
+
+```
+Add challenge: <Challenge Title>
+```
+
+Examples:
+- `Add challenge: Network Policy Debugging`
+- `Add challenge: RBAC Service Account`
+
+### PR description template
+
+```markdown
+## Challenge: <Challenge Title>
+
+### What does this challenge teach?
+Briefly explain the Kubernetes concept and why it matters.
+
+### Difficulty and estimated time
+- **Difficulty**: Beginner | Intermediate | Advanced
+- **Estimated time**: X minutes
+
+### Themes
+- theme-1
+- theme-2
+
+### Testing
+- [x] Tested on fresh Kind cluster
+- [x] Verified broken state is reproducible
+- [x] Solution passes all validation
+- [x] Validation messages are clear
+- [x] Estimated time is accurate
+
+### Screenshots (optional)
+Include screenshots of:
+- The broken state (error messages, events)
+- The fixed state (validation passing)
+
+### Additional notes
+Any special considerations, dependencies, or context.
+```
+
+## Challenge quality standards
+
+### Design principles
+
+#### 1. Single focused concept
+
+Good:
+> "This challenge teaches how to configure resource requests and limits"
+
+Bad:
+> "This challenge teaches resource limits, RBAC, network policies, and storage"
+
+**Guideline**: One clear concept per challenge.
+
+#### 2. Realistic scenarios
+
+Good:
+> "A deployment fails because the ServiceAccount lacks permissions to read ConfigMaps"
+
+Bad:
+> "A deployment has exactly 3 typos that you must find"
+
+**Guideline**: Mirror real production problems, not artificial puzzles.
+
+#### 3. Appropriate difficulty
+
+Match difficulty to complexity:
+
+- **Beginner**: Single issue, clear error messages, common scenarios
+- **Intermediate**: Multiple related issues, requires debugging
+- **Advanced**: Complex interactions, subtle issues, production-like
+
+#### 4. Clear learning path
+
+Provide progression:
+- Hints that guide without revealing the solution
+- Validation feedback that indicates what's missing
+- README context that explains the "why"
+
+### Code quality
+
+#### Manifests
+
+```yaml
+# Good: Clear, minimal, well-commented
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  namespace: challenge-rbac-basics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+    spec:
+      serviceAccountName: web-app-sa  # Lacks permissions
+      containers:
+      - name: nginx
+        image: nginx:1.21
+```
+
+#### Validation
+
+```yaml
+# Good: Specific, descriptive, helpful
+- name: pod-running
+  type: PodStatus
+  description: "Web app pod must be running"
+  target:
+    selector:
+      app: web-app
+  expected:
+    phase: Running
+
+# Bad: Vague, unhelpful
+- name: check1
+  type: PodStatus
+  description: "Check failed"
+```
+
+#### Metadata
+
+```yaml
+# Good: Clear objectives and hints
+objectives:
+  - "Understand ServiceAccount and RBAC"
+  - "Debug permission errors"
+  - "Create appropriate Role and RoleBinding"
+
+hints:
+  - "Check pod logs for permission errors"
+  - "Review the ServiceAccount used by the deployment"
+  - "Ensure the Role grants necessary API access"
+
+# Bad: Generic or missing
+objectives:
+  - "Fix the problem"
+```
+
+### Documentation
+
+#### README structure
+
+Every challenge should have a README with:
+
+1. **Context**: Why does this problem occur?
+2. **The Problem**: What's broken?
+3. **Learning Objectives**: What will you understand?
+4. **Tips**: How to start investigating
+5. **References**: Links to official docs
+
+See [Challenge Structure](/docs/developer/challenge-structure#readme-file-optional) for an example.
+
+## Review process
+
+### What reviewers look for
+
+1. **Correctness**
+   - Does the challenge work as described?
+   - Is validation accurate?
+   - Is the solution correct?
+
+2. **Educational value**
+   - Does it teach something useful?
+   - Is it appropriate for the stated difficulty?
+   - Are objectives clear?
+
+3. **Code quality**
+   - Are manifests minimal and clear?
+   - Is validation comprehensive?
+   - Are error messages helpful?
+
+4. **Testing**
+   - Has it been tested on a fresh cluster?
+   - Is estimated time accurate?
+   - Are edge cases handled?
+
+### Addressing feedback
+
+When reviewers request changes:
+
+1. Make the requested modifications
+2. Test again to ensure everything still works
+3. Push the changes to your branch
+4. Respond to review comments
+
+```bash
+git add .
+git commit -m "Address review feedback: improve validation messages"
+git push origin challenge/<challenge-slug>
+```
+
+The PR will automatically update.
+
+## Coding standards
+
+### File naming
+
+- Use lowercase with hyphens
+- Be descriptive but concise
+
+```
+✅ manifests/deployment.yaml
+✅ validation/challenge-validation.yaml
+❌ Deployment.yaml
+❌ val.yaml
+```
+
+### YAML formatting
+
+- Use 2 spaces for indentation
+- Add comments to explain non-obvious configuration
+- Group related resources in the same file with `---` separator
+
+```yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: challenge-example
+---
+apiVersion: apps/v1
+kind: Deployment
+# ...
+```
+
+### Resource naming
+
+Use clear, consistent names:
+
+```yaml
+# Good
+metadata:
+  name: web-app
+  labels:
+    app: web-app
+    component: frontend
+
+# Bad
+metadata:
+  name: x
+  labels:
+    app: app1
+```
+
+## Common pitfalls
+
+### 1. Challenge is too complex
+
+**Problem**: Trying to teach too many concepts at once.
+
+**Fix**: Split into multiple challenges, each focusing on one concept.
+
+### 2. Validation is flaky
+
+**Problem**: Checks fail intermittently due to timing issues.
+
+**Fix**: Use appropriate timeouts and retry policies:
+
+```yaml
+retryPolicy:
+  attempts: 10
+  delay: 5s
+timeout: 60s
+```
+
+### 3. Error messages are unclear
+
+**Problem**: Users don't understand what's wrong.
+
+**Fix**: Write descriptive validation messages:
+
+```yaml
+description: "Service 'web-app' must be accessible on port 80 from within the cluster"
+```
+
+### 4. Estimated time is inaccurate
+
+**Problem**: Challenge takes much longer than stated.
+
+**Fix**: Test with someone unfamiliar with the problem and adjust the estimate.
+
+### 5. Solution has multiple valid approaches
+
+**Problem**: Users solve it differently than expected.
+
+**Fix**: This is good! Either:
+- Document all valid approaches in `solution/`
+- Make validation flexible enough to accept different solutions
+
+## Best practices
+
+### Design
+
+- Start simple - complexity can be added later
+- Focus on one learning objective
+- Make the broken state obvious but not trivial
+- Provide progressive hints
+
+### Implementation
+
+- Use stable, common images (nginx, busybox, etc.)
+- Avoid external dependencies when possible
+- Keep resource usage minimal
+- Test on a clean cluster
+
+### Documentation
+
+- Explain the "why", not just the "what"
+- Link to official Kubernetes documentation
+- Provide context for real-world relevance
+- Write for beginners, even in advanced challenges
+
+## After your PR is merged
+
+### Celebrate! 🎉
+
+Your challenge will help developers learn Kubernetes!
+
+### Share
+
+Consider sharing your contribution:
+- Tweet about it with `#kubeasy`
+- Blog about the problem and solution
+- Add it to your portfolio
+
+### Iterate
+
+Based on user feedback:
+- Improve hints or documentation
+- Refine validation
+- Adjust difficulty rating
+
+## Getting help
+
+If you need help contributing:
+
+- **GitHub Discussions**: [kubeasy-dev/challenges/discussions](https://github.com/kubeasy-dev/challenges/discussions)
+- **GitHub Issues**: [kubeasy-dev/challenges/issues](https://github.com/kubeasy-dev/challenges/issues)
+- **Documentation**: [docs.kubeasy.dev](https://docs.kubeasy.dev)
+
+## Code of Conduct
+
+Be respectful, constructive, and welcoming. See our [Code of Conduct](https://github.com/kubeasy-dev/challenges/blob/main/CODE_OF_CONDUCT.md) for details.
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the same license as the project (MIT License).
+
+---
+
+Thank you for making Kubernetes learning better for everyone! 🚀

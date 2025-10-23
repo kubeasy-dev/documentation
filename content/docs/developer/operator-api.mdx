@@ -1,0 +1,610 @@
+---
+title: Operator API Reference
+description: Complete technical reference for the Challenge Operator validation APIs.
+---
+
+This page provides the complete reference for the Challenge Operator's custom resources: `StaticValidation` and `DynamicValidation`.
+
+## Overview
+
+The Challenge Operator provides two types of validation:
+
+| Type | Purpose | Implementation |
+|------|---------|----------------|
+| **StaticValidation** | Validates resource **structure** using Rego policies | Open Policy Agent (OPA) |
+| **DynamicValidation** | Validates runtime **behavior** | Built-in checks (logs, status, rbac) |
+
+Both use the same `TargetRef` system to select which resources to validate.
+
+## StaticValidation
+
+Validates the structure of Kubernetes manifests using Rego rules (Open Policy Agent).
+
+### API Version
+
+```yaml
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: StaticValidation
+```
+
+### Spec
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `target` | TargetRef | Yes | Selects resources to validate |
+| `rulesConfigMap` | ConfigMapRef | Yes | Reference to ConfigMap containing Rego rules |
+
+### TargetRef
+
+Specifies which resources to validate:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `apiVersion` | string | Yes | Resource API version (e.g., `v1`, `batch/v1`) |
+| `kind` | string | Yes | Resource kind (e.g., `Pod`, `Deployment`) |
+| `labelSelector` | LabelSelector | No | Match resources by labels |
+| `name` | string | No | Match a specific resource by name |
+
+**Resolution priority**:
+1. If `name` is set → validates that specific resource
+2. If `labelSelector` is set → validates all matching resources
+3. If neither → validates all resources of that kind in the namespace
+
+### ConfigMapRef
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Name of ConfigMap containing Rego rules |
+
+**ConfigMap requirements**:
+- Must be in the same namespace as the StaticValidation
+- Must contain `.rego` files in the data section
+- Each rule file must define `data.kubeasy.challenge.violation` query
+- Violations must return array of `{msg: string}` objects
+
+### Status
+
+```yaml
+status:
+  allPassed: boolean           # true if all rules passed
+  lastChecked: timestamp       # Last validation time
+  error: string                # Error message if validation failed
+  resources:                   # Per-resource results
+    - target:
+        apiVersion: string
+        kind: string
+        name: string
+      ruleResults:
+        - rule: string         # Rule name
+          status: string       # "Pass" or "Fail"
+          message: string      # Violation message
+```
+
+### Complete example
+
+**StaticValidation resource**:
+
+```yaml
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: StaticValidation
+metadata:
+  name: pod-resource-limits
+  namespace: my-challenge
+spec:
+  target:
+    apiVersion: v1
+    kind: Pod
+    labelSelector:
+      matchLabels:
+        app: web-app
+  rulesConfigMap:
+    name: resource-limits-rules
+```
+
+**ConfigMap with Rego rules**:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: resource-limits-rules
+  namespace: my-challenge
+data:
+  resource-limits.rego: |
+    package kubeasy.challenge
+
+    violation[{"msg": msg}] {
+      container := input.spec.containers[_]
+      not container.resources.limits.cpu
+      msg := sprintf("Container %s missing CPU limit", [container.name])
+    }
+
+    violation[{"msg": msg}] {
+      container := input.spec.containers[_]
+      not container.resources.limits.memory
+      msg := sprintf("Container %s missing memory limit", [container.name])
+    }
+
+  security.rego: |
+    package kubeasy.challenge
+
+    violation[{"msg": msg}] {
+      input.spec.securityContext.runAsNonRoot != true
+      msg := "Pod must run as non-root user"
+    }
+```
+
+## DynamicValidation
+
+Validates runtime behavior of resources using built-in checks.
+
+### API Version
+
+```yaml
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: DynamicValidation
+```
+
+### Spec
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `target` | TargetRef | Yes | Selects resources to validate (same as StaticValidation) |
+| `checks` | []DynamicCheck | Yes | List of checks to perform |
+
+### DynamicCheck
+
+Each check has a `kind` field and type-specific configuration:
+
+```yaml
+checks:
+  - kind: logs | status | rbac
+    logCheck: {...}      # Only for kind: logs
+    statusCheck: {...}   # Only for kind: status
+    rbacCheck: {...}     # Only for kind: rbac
+```
+
+## Check Types
+
+### 1. logs - Log Content Validation
+
+Searches for expected strings in pod logs.
+
+**Works only with**: Pod resources
+
+**Fields**:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `expectedString` | string | Yes | String to search for in logs |
+| `container` | string | No | Container name (defaults to first container) |
+| `sinceSeconds` | int64 | No | Only check logs from last N seconds |
+
+**Example**:
+
+```yaml
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: DynamicValidation
+metadata:
+  name: pod-logs-check
+  namespace: my-challenge
+spec:
+  target:
+    apiVersion: v1
+    kind: Pod
+    labelSelector:
+      matchLabels:
+        app: web-app
+  checks:
+    - kind: logs
+      logCheck:
+        expectedString: "Server started successfully"
+        container: nginx
+        sinceSeconds: 300
+```
+
+### 2. status - Status Condition Validation
+
+Checks resource status conditions or status fields.
+
+**Works with**: Any resource with `.status.conditions` or `.status` fields
+
+**Fields**:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `condition` | string | Yes | Condition name to check (e.g., `Ready`, `Complete`) |
+| `expectedStatus` | string | Yes | Expected status value (e.g., `True`, `true`) |
+| `timeoutSeconds` | int64 | No | Maximum time to wait for condition |
+
+**Behavior**:
+- First checks `.status.conditions[]` array for matching condition
+- If no conditions array, checks `.status.<condition>` field directly
+- Case-insensitive for status field names
+
+**Example - Pod readiness**:
+
+```yaml
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: DynamicValidation
+metadata:
+  name: pod-ready-check
+  namespace: my-challenge
+spec:
+  target:
+    apiVersion: v1
+    kind: Pod
+    labelSelector:
+      matchLabels:
+        app: web-app
+  checks:
+    - kind: status
+      statusCheck:
+        condition: "Ready"
+        expectedStatus: "True"
+        timeoutSeconds: 60
+```
+
+**Example - Job completion**:
+
+```yaml
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: DynamicValidation
+metadata:
+  name: job-completion-check
+  namespace: my-challenge
+spec:
+  target:
+    apiVersion: batch/v1
+    kind: Job
+    name: batch-job
+  checks:
+    - kind: status
+      statusCheck:
+        condition: "Complete"
+        expectedStatus: "True"
+```
+
+### 3. rbac - RBAC Permission Validation
+
+Verifies ServiceAccount has required permissions using SubjectAccessReview.
+
+**Works with**: Pod resources (validates the pod's ServiceAccount)
+
+**Fields**:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `serviceAccountName` | string | Yes | ServiceAccount to validate |
+| `resourceAttributes` | []ResourceAttribute | Yes | Permissions to verify |
+
+**ResourceAttribute fields**:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `verb` | string | Yes | Permission verb (get, list, watch, create, update, patch, delete) |
+| `group` | string | No | API group (empty string for core API) |
+| `resource` | string | Yes | Resource type (pods, configmaps, secrets, etc.) |
+| `name` | string | No | Specific resource name (optional) |
+
+**Example**:
+
+```yaml
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: DynamicValidation
+metadata:
+  name: rbac-permissions-check
+  namespace: my-challenge
+spec:
+  target:
+    apiVersion: v1
+    kind: Pod
+    labelSelector:
+      matchLabels:
+        app: web-app
+  checks:
+    - kind: rbac
+      rbacCheck:
+        serviceAccountName: web-app-sa
+        resourceAttributes:
+          - verb: get
+            resource: configmaps
+          - verb: list
+            resource: pods
+          - verb: get
+            resource: secrets
+            name: app-secrets
+```
+
+## DynamicValidation Status
+
+```yaml
+status:
+  allPassed: boolean           # true if all checks passed
+  lastChecked: timestamp       # Last validation time
+  error: string                # Error message if validation failed
+  resources:                   # Per-resource results
+    - target:
+        apiVersion: string
+        kind: string
+        name: string
+      checkResults:
+        - kind: string         # Check type (logs, status, rbac)
+          status: string       # "Pass" or "Fail"
+          message: string      # Check result details
+```
+
+**Example status**:
+
+```yaml
+status:
+  allPassed: true
+  lastChecked: "2025-10-23T10:30:00Z"
+  resources:
+    - target:
+        apiVersion: v1
+        kind: Pod
+        name: web-app-abc123
+      checkResults:
+        - kind: logs
+          status: Pass
+          message: 'Found expected string "Server started successfully" in logs'
+        - kind: status
+          status: Pass
+          message: 'Condition "Ready" has status "True"'
+        - kind: rbac
+          status: Pass
+          message: "All RBAC permissions verified"
+```
+
+## Complete Challenge Example
+
+Here's a realistic challenge validation setup:
+
+```yaml
+---
+# Static validation: Ensure pods have resource limits
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: StaticValidation
+metadata:
+  name: resource-validation
+  namespace: my-challenge
+spec:
+  target:
+    apiVersion: v1
+    kind: Pod
+    labelSelector:
+      matchLabels:
+        app: web-app
+  rulesConfigMap:
+    name: resource-rules
+
+---
+# ConfigMap with Rego rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: resource-rules
+  namespace: my-challenge
+data:
+  limits.rego: |
+    package kubeasy.challenge
+
+    violation[{"msg": msg}] {
+      container := input.spec.containers[_]
+      not container.resources.limits
+      msg := sprintf("Container %s must have resource limits", [container.name])
+    }
+
+---
+# Dynamic validation: Check runtime behavior
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: DynamicValidation
+metadata:
+  name: runtime-validation
+  namespace: my-challenge
+spec:
+  target:
+    apiVersion: v1
+    kind: Pod
+    labelSelector:
+      matchLabels:
+        app: web-app
+  checks:
+    # Check pod is ready
+    - kind: status
+      statusCheck:
+        condition: "Ready"
+        expectedStatus: "True"
+
+    # Check logs show success
+    - kind: logs
+      logCheck:
+        expectedString: "Application started"
+
+    # Verify RBAC permissions
+    - kind: rbac
+      rbacCheck:
+        serviceAccountName: web-app-sa
+        resourceAttributes:
+          - verb: get
+            resource: configmaps
+          - verb: list
+            resource: secrets
+```
+
+## Controller Behavior
+
+### Reconciliation
+
+Both controllers reconcile every **30 seconds**:
+- Re-evaluates all checks
+- Updates status with latest results
+- Continues until deleted
+
+### Target Resolution
+
+When multiple resources match the target:
+- Each resource is validated independently
+- Status shows results per resource
+- `allPassed` is true only if ALL resources pass ALL checks
+
+### Error Handling
+
+If validation encounters errors:
+- `status.error` contains the error message
+- `status.allPassed` is set to false
+- Individual check/rule results may show partial success
+
+## Writing Rego Rules
+
+### Rule Structure
+
+All Rego rules must:
+1. Be in the `kubeasy.challenge` package
+2. Define a `violation` rule
+3. Return objects with `msg` field
+
+```go
+package kubeasy.challenge
+
+# Rule name is derived from the violation condition
+violation[{"msg": msg}] {
+  # Your validation logic
+  # Use 'input' to access the resource being validated
+  condition_that_should_fail
+  msg := "Error message explaining the violation"
+}
+```
+
+### Accessing Resource Fields
+
+The `input` object contains the full resource:
+
+```go
+# Access spec fields
+input.spec.replicas
+input.spec.containers[_].image
+
+# Access metadata
+input.metadata.labels["app"]
+input.metadata.name
+
+# Access status (if available)
+input.status.phase
+```
+
+### Multiple Violations
+
+One rule can return multiple violations:
+
+```go
+violation[{"msg": msg}] {
+  container := input.spec.containers[_]
+  not container.resources.limits.cpu
+  msg := sprintf("Container %s missing CPU limit", [container.name])
+}
+
+violation[{"msg": msg}] {
+  container := input.spec.containers[_]
+  not container.resources.limits.memory
+  msg := sprintf("Container %s missing memory limit", [container.name])
+}
+```
+
+### Example Rules
+
+**Require labels**:
+
+```go
+package kubeasy.challenge
+
+violation[{"msg": msg}] {
+  not input.metadata.labels.app
+  msg := "Pod must have 'app' label"
+}
+
+violation[{"msg": msg}] {
+  not input.metadata.labels.version
+  msg := "Pod must have 'version' label"
+}
+```
+
+**Security context validation**:
+
+```go
+package kubeasy.challenge
+
+violation[{"msg": msg}] {
+  container := input.spec.containers[_]
+  container.securityContext.privileged == true
+  msg := sprintf("Container %s cannot run as privileged", [container.name])
+}
+
+violation[{"msg": msg}] {
+  not input.spec.securityContext.runAsNonRoot
+  msg := "Pod must run as non-root"
+}
+```
+
+## Best Practices
+
+### StaticValidation
+
+1. **Keep rules focused**: One ConfigMap per validation concern
+2. **Clear messages**: Include resource names and specific fields in violation messages
+3. **Test rules**: Verify rules work with valid and invalid resources
+
+### DynamicValidation
+
+1. **Use appropriate checks**:
+   - `logs` for application output
+   - `status` for Kubernetes conditions
+   - `rbac` for permission verification
+
+2. **Set timeouts**: Use `timeoutSeconds` for checks that may take time
+
+3. **Container names**: Specify `container` in log checks if pods have multiple containers
+
+### General
+
+1. **Namespace scope**: Both CRDs are namespaced - they only validate resources in the same namespace
+2. **Label selectors**: Use consistent labels across manifests and validations
+3. **Status monitoring**: Check `.status.allPassed` to determine if challenge is solved
+
+## Troubleshooting
+
+### View validation status
+
+```bash
+kubectl get staticvalidation -n <namespace>
+kubectl get dynamicvalidation -n <namespace>
+```
+
+### Detailed status
+
+```bash
+kubectl get staticvalidation <name> -n <namespace> -o yaml
+kubectl get dynamicvalidation <name> -n <namespace> -o yaml
+```
+
+### Check operator logs
+
+```bash
+kubectl logs -n kubeasy-system -l app=challenge-operator
+```
+
+### Test Rego rules
+
+Use the `opa` CLI to test rules locally:
+
+```bash
+opa eval -d rules.rego -i resource.json 'data.kubeasy.challenge.violation'
+```
+
+## Related Resources
+
+- [Validation Rules Guide](/docs/developer/validation-rules) - Practical examples
+- [Testing Challenges](/docs/developer/testing-challenges) - Testing validation locally
+- [Challenge Operator GitHub](https://github.com/kubeasy-dev/challenge-operator) - Source code
+- [OPA Documentation](https://www.openpolicyagent.org/docs/latest/) - Learn Rego

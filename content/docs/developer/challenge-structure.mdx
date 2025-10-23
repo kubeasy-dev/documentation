@@ -1,0 +1,338 @@
+---
+title: Challenge Structure
+description: Understanding the anatomy of a Kubeasy challenge and how all components work together.
+---
+
+Every Kubeasy challenge follows a consistent structure that makes it easy to understand, test, and maintain. This page explains each component and how they work together.
+
+## Directory structure
+
+Here's the typical structure of a challenge in the [`challenges` repository](https://github.com/kubeasy-dev/challenges):
+
+```
+challenges/
+└── rbac-basics/
+    ├── manifests/              # Initial broken state
+    │   ├── namespace.yaml
+    │   ├── deployment.yaml
+    │   ├── service-account.yaml
+    │   └── role.yaml
+    ├── validation/             # Validation rules
+    │   ├── kyverno/           # Admission control policies
+    │   │   └── deny-privileged.yaml
+    │   ├── static/            # Manifest structure validation
+    │   │   ├── validation.yaml
+    │   │   └── rules-configmap.yaml
+    │   └── dynamic/           # Runtime behavior validation
+    │       └── validation.yaml
+    ├── metadata.yaml          # Challenge information
+    └── README.md             # Learning context (optional)
+```
+
+## Components
+
+### 1. Manifests directory
+
+The `manifests/` directory contains the **initial broken state** - the Kubernetes resources that learners need to fix.
+
+**Design principles**:
+- **Keep it minimal** - Only include what's needed
+- **Make it realistic** - Mirror production problems
+- **Avoid red herrings** - Don't add confusing complexity
+- **Use clear naming** - Be descriptive
+
+**Example**:
+
+```yaml
+# manifests/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  namespace: rbac-basics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+    spec:
+      serviceAccountName: web-app-sa  # Missing RBAC permissions!
+      containers:
+      - name: nginx
+        image: nginx:1.21
+```
+
+### 2. Validation directory
+
+The `validation/` directory contains rules that define success criteria. It's organized into three subdirectories:
+
+#### validation/kyverno/ - Admission Control
+
+Kyverno policies that **prevent users from cheating or bypassing the challenge**:
+- Block privileged containers that could escape restrictions
+- Prevent hostPath volumes that access cluster files
+- Deny resources that circumvent the challenge's learning objectives
+
+**Purpose**: Block attempts to work around the challenge instead of solving it properly.
+
+**Example** - Prevent privileged pods:
+
+```yaml
+# validation/kyverno/deny-privileged.yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: deny-privileged-rbac-basics
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: deny-privileged-containers
+      match:
+        resources:
+          kinds:
+            - Pod
+          namespaces:
+            - rbac-basics
+      validate:
+        message: "Privileged containers are not allowed"
+        pattern:
+          spec:
+            containers:
+              - =(securityContext):
+                  =(privileged): false
+```
+
+#### validation/static/ - Structure Validation
+
+StaticValidation resources that **check manifest structure** using Rego rules:
+- Verify resource limits are within range
+- Check labels have correct values
+- Validate configuration matches requirements
+
+**Purpose**: Verify manifests are configured correctly.
+
+**Example**:
+
+```yaml
+# validation/static/validation.yaml
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: StaticValidation
+metadata:
+  name: rbac-validation
+  namespace: rbac-basics
+spec:
+  target:
+    apiVersion: v1
+    kind: Pod
+    labelSelector:
+      matchLabels:
+        app: web-app
+  rulesConfigMap:
+    name: rbac-validation-rules
+```
+
+```yaml
+# validation/static/rules-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rbac-validation-rules
+  namespace: rbac-basics
+data:
+  security.rego: |
+    package kubeasy.challenge
+
+    violation[{"msg": msg}] {
+      not input.spec.securityContext.runAsNonRoot
+      msg := "Pod must run as non-root user"
+    }
+```
+
+#### validation/dynamic/ - Behavior Validation
+
+DynamicValidation resources that **check runtime behavior**:
+- Pods are running and ready
+- Logs show expected output
+- ServiceAccounts have correct permissions
+
+**Purpose**: Verify the application actually works.
+
+**Example**:
+
+```yaml
+# validation/dynamic/validation.yaml
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: DynamicValidation
+metadata:
+  name: rbac-validation
+  namespace: rbac-basics
+spec:
+  target:
+    apiVersion: v1
+    kind: Pod
+    labelSelector:
+      matchLabels:
+        app: web-app
+  checks:
+    # Check pod is ready
+    - kind: status
+      statusCheck:
+        condition: "Ready"
+        expectedStatus: "True"
+
+    # Verify RBAC permissions
+    - kind: rbac
+      rbacCheck:
+        serviceAccountName: web-app-sa
+        resourceAttributes:
+          - verb: get
+            resource: configmaps
+```
+
+### 3. Metadata file
+
+The `metadata.yaml` file describes the challenge:
+
+```yaml
+id: rbac-basics
+title: "RBAC Basics: Service Account Permissions"
+description: |
+  A deployment is failing because the ServiceAccount lacks permissions.
+  Fix the RBAC configuration to get the pod running.
+
+difficulty: beginner  # beginner | intermediate | advanced
+estimatedTime: 15     # minutes
+themes:
+  - rbac
+  - security
+  - troubleshooting
+
+objectives:
+  - "Understand ServiceAccount and RBAC"
+  - "Debug permission errors"
+  - "Create appropriate Role and RoleBinding"
+
+hints:
+  - "Check pod logs for permission errors"
+  - "Review the ServiceAccount used by the deployment"
+  - "Ensure the Role grants necessary API access"
+```
+
+**Metadata fields**:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | Yes | Unique identifier (matches directory name) |
+| `title` | string | Yes | Display name |
+| `description` | string | Yes | Problem description |
+| `difficulty` | enum | Yes | beginner, intermediate, or advanced |
+| `estimatedTime` | number | Yes | Minutes to complete |
+| `themes` | array | Yes | Tags for categorization |
+| `objectives` | array | No | Learning goals |
+| `hints` | array | No | Progressive hints |
+
+**Choosing difficulty**:
+- **Beginner**: Single issue, clear errors
+- **Intermediate**: Multiple related issues
+- **Advanced**: Complex interactions
+
+**Common themes**: `rbac`, `networking`, `storage`, `security`, `observability`, `troubleshooting`, `resources`, `workloads`
+
+### 4. README file (optional)
+
+Provides additional learning context:
+
+```markdown
+# RBAC Basics Challenge
+
+## Context
+
+Applications running in pods often need to interact with the Kubernetes API.
+By default, pods have minimal permissions. You must explicitly grant permissions using RBAC.
+
+## The Problem
+
+The web-app deployment uses a ServiceAccount that lacks permissions.
+When the pod tries to read a ConfigMap, it receives a 403 Forbidden error.
+
+## Learning Objectives
+
+- Understand how ServiceAccounts work
+- Debug RBAC permission errors
+- Create appropriate Roles and RoleBindings
+
+## Tips
+
+Start by checking pod logs:
+\`\`\`bash
+kubectl logs -l app=web-app -n rbac-basics
+\`\`\`
+
+Look for permission denied errors.
+
+## References
+
+- [Kubernetes RBAC Documentation](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
+```
+
+## How validation works together
+
+1. **Learner applies/updates resource**
+   → **Kyverno** checks it first
+   - If blocked → Error message shown
+   - If allowed → Resource created
+
+2. **Resource exists**
+   → **Challenge Operator** validates (every 30s)
+   - **StaticValidation** checks structure
+   - **DynamicValidation** checks behavior
+
+3. **Challenge solved when**:
+   - Kyverno allows the resource
+   - StaticValidation rules pass
+   - DynamicValidation checks pass
+
+## Best practices
+
+### Manifests
+
+- **One issue at a time**: Don't combine multiple unrelated problems
+- **Clear comments**: Mark the broken part
+- **Realistic**: Use problems that occur in production
+- **Minimal**: Only include necessary resources
+
+### Validation
+
+- **Layer defenses**:
+  - Kyverno: Block attempts to bypass the challenge
+  - Static: Check configuration is correct
+  - Dynamic: Verify it works
+
+- **Clear messages**: Users see these when validation fails
+- **Test thoroughly**: Ensure validation catches problems
+
+### Documentation
+
+- **Explain why**: Not just what's broken, but why it matters
+- **Provide context**: When does this happen in real world?
+- **Link to docs**: Reference official Kubernetes documentation
+
+## Summary
+
+A complete challenge includes:
+
+1. **manifests/** - Broken initial state
+2. **validation/kyverno/** - Admission control policies
+3. **validation/static/** - Structure validation (Rego)
+4. **validation/dynamic/** - Behavior validation (logs/status/rbac)
+5. **metadata.yaml** - Challenge information
+6. **README.md** (optional) - Learning context
+
+**DO NOT** include solutions - learners must figure it out themselves!
+
+Next: [Creating Your First Challenge](/docs/developer/creating-challenge)

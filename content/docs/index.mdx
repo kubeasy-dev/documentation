@@ -1,13 +1,117 @@
 ---
-title: Hello World
-description: Your first document
+title: Kubeasy Documentation
+description: Learn Kubernetes through hands-on challenges. Complete documentation for users and contributors.
 ---
 
-Welcome to the docs! You can start writing documents in `/content/docs`.
+Welcome to the **Kubeasy Documentation**!
 
-## What is Next?
+Kubeasy is an interactive learning platform that helps developers master Kubernetes by solving real-world challenges in a safe, local environment.
 
-<Cards>
-  <Card title="Learn more about Next.js" href="https://nextjs.org/docs" />
-  <Card title="Learn more about Fumadocs" href="https://fumadocs.dev" />
-</Cards>
+## What is Kubeasy?
+
+Kubeasy drops you into broken Kubernetes scenarios — maybe a pod won't start, RBAC is blocking access, or a network policy is too restrictive. Your goal? **Investigate, fix, and validate** using real tools like `kubectl`.
+
+No browser playgrounds. No multiple-choice questions. Just you, your terminal, and realistic problems to solve.
+
+## Documentation sections
+
+### For Users
+
+Learn how to use Kubeasy to practice Kubernetes skills:
+
+- **[Getting Started](/docs/user/getting-started)** - Install the CLI and solve your first challenge
+- **[How It Works](/docs/user/how-it-works)** - Understand the challenge workflow
+- **[CLI Reference](/docs/user/cli-reference)** - Complete command reference
+- **[Troubleshooting](/docs/user/troubleshooting)** - Fix common issues
+
+**[→ Start with the User Guide](/docs/user)**
+
+### For Developers
+
+Learn how to create and contribute challenges:
+
+- **[Challenge Structure](/docs/developer/challenge-structure)** - Anatomy of a challenge
+- **[Creating Challenges](/docs/developer/creating-challenge)** - Build your first challenge
+- **[Validation Rules](/docs/developer/validation-rules)** - Define success criteria
+- **[Testing](/docs/developer/testing-challenges)** - Test challenges locally
+- **[Contributing](/docs/developer/contributing)** - Submission guidelines
+- **[Operator API](/docs/developer/operator-api)** - Technical reference
+
+**[→ Start with the Developer Guide](/docs/developer)**
+
+## Key features
+
+### Local-first
+
+Everything runs on your machine using Kind. No cloud account needed, no data leaves your system.
+
+### Real Kubernetes
+
+Use `kubectl`, Lens, or any tool you prefer. The challenges run on actual Kubernetes, not a simulation.
+
+### Automated validation
+
+Challenges validate themselves using:
+- **Kyverno** - Prevents cheating by blocking invalid shortcuts
+- **Static validation** - Checks resource configuration with Rego
+- **Dynamic validation** - Verifies runtime behavior (logs, status, RBAC)
+
+### Progressive learning
+
+Challenges range from beginner-friendly RBAC scenarios to advanced multi-component debugging.
+
+## Quick start
+
+### For learners
+
+```bash
+# Install the CLI
+npm install -g @kubeasy-dev/kubeasy-cli
+
+# Login with your API token
+kubeasy login
+
+# Setup your local environment
+kubeasy setup
+
+# Start a challenge
+kubeasy challenge start rbac-basics
+```
+
+### For contributors
+
+```bash
+# Clone the challenges repository
+git clone https://github.com/kubeasy-dev/challenges.git
+cd challenges
+
+# Create your challenge
+mkdir my-challenge
+cd my-challenge
+mkdir -p manifests validation/{kyverno,static,dynamic}
+
+# Test it
+kubeasy setup
+kubectl apply -f manifests/
+kubectl apply -f validation/
+```
+
+## Philosophy
+
+Kubeasy believes the best way to learn Kubernetes is through **practice, not theory**. By simulating real issues in isolated environments, you can safely explore, break things, and rebuild — developing a deeper understanding of how Kubernetes actually works.
+
+## Getting help
+
+- **User questions**: [GitHub Discussions](https://github.com/kubeasy-dev/challenges/discussions)
+- **Bug reports**: [GitHub Issues](https://github.com/kubeasy-dev/kubeasy-cli/issues)
+- **Website**: [kubeasy.dev](https://kubeasy.dev)
+
+## What's next?
+
+- **New to Kubeasy?** → [User Guide](/docs/user)
+- **Want to contribute?** → [Developer Guide](/docs/developer)
+- **Need help?** → [Troubleshooting](/docs/user/troubleshooting)
+
+---
+
+Happy learning! 🚀

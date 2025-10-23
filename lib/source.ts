@@ -1,12 +1,24 @@
 import { docs } from '@/.source';
 import { type InferPageType, loader } from 'fumadocs-core/source';
-import { lucideIconsPlugin } from 'fumadocs-core/source/lucide-icons';
+import { icons } from 'lucide-react';
+import { createElement } from 'react';
 
 // See https://fumadocs.dev/docs/headless/source-api for more info
 export const source = loader({
-  baseUrl: '/docs',
+  baseUrl: '/',
   source: docs.toFumadocsSource(),
-  plugins: [lucideIconsPlugin()],
+  icon(icon) {
+    if (!icon) return;
+    // Convert kebab-case to PascalCase for lucide-react icons
+    const iconName = icon
+      .split('-')
+      .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join('');
+
+    if (iconName in icons) {
+      return createElement(icons[iconName as keyof typeof icons]);
+    }
+  },
 });
 
 export function getPageImage(page: InferPageType<typeof source>) {
@@ -14,7 +26,7 @@ export function getPageImage(page: InferPageType<typeof source>) {
 
   return {
     segments,
-    url: `/og/docs/${segments.join('/')}`,
+    url: `/og/${segments.join('/')}`,
   };
 }
 

@@ -1,0 +1,537 @@
+---
+title: Creating Your First Challenge
+description: Step-by-step guide to building a Kubeasy challenge from scratch.
+---
+
+This guide walks you through creating a simple but complete Kubeasy challenge. By the end, you'll have a working challenge ready to test locally.
+
+## Before you start
+
+Make sure you have:
+
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) installed
+- [Kind](https://kind.sigs.k8s.io/) or another local Kubernetes cluster
+- Basic familiarity with Kubernetes manifests
+- Git and GitHub account
+
+## Step 1: Clone the challenges repository
+
+```bash
+git clone https://github.com/kubeasy-dev/challenges.git
+cd challenges
+```
+
+Browse existing challenges to get familiar with the structure:
+
+```bash
+ls -la
+```
+
+## Step 2: Design your challenge
+
+Before writing any code, answer these questions:
+
+1. **What Kubernetes concept does this teach?**
+   - Example: RBAC, resource limits, network policies
+
+2. **What's the broken scenario?**
+   - Example: Pod fails due to missing RBAC permissions
+
+3. **How do learners know it's fixed?**
+   - Example: Pod runs successfully and can access resources
+
+4. **Is this realistic?**
+   - Does this problem occur in production?
+
+### Example challenge idea
+
+Let's create a challenge about RBAC permissions:
+
+- **Concept**: ServiceAccount RBAC
+- **Problem**: Pod can't access ConfigMaps due to missing permissions
+- **Success**: Pod runs and logs show successful ConfigMap access
+- **Realistic**: Yes - common in production
+
+## Step 3: Create the directory structure
+
+```bash
+mkdir rbac-configmap-access
+cd rbac-configmap-access
+mkdir -p manifests validation/{kyverno,static,dynamic}
+```
+
+You should now have:
+
+```
+rbac-configmap-access/
+├── manifests/
+└── validation/
+    ├── kyverno/
+    ├── static/
+    └── dynamic/
+```
+
+## Step 4: Write the broken manifests
+
+Create `manifests/namespace.yaml`:
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rbac-configmap-access
+```
+
+Create `manifests/configmap.yaml`:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: rbac-configmap-access
+data:
+  database_url: "postgres://db:5432/myapp"
+```
+
+Create `manifests/serviceaccount.yaml`:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-sa
+  namespace: rbac-configmap-access
+# BUG: No Role or RoleBinding defined!
+# The pod using this SA won't be able to read ConfigMaps
+```
+
+Create `manifests/deployment.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: rbac-configmap-access
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: myapp
+  template:
+    metadata:
+      labels:
+        app: myapp
+    spec:
+      serviceAccountName: app-sa
+      containers:
+      - name: app
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          echo "Attempting to read ConfigMap..."
+          # This will fail with permission denied
+          wget -O- --header="Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            https://kubernetes.default.svc/api/v1/namespaces/rbac-configmap-access/configmaps/app-config
+          sleep 3600
+```
+
+**Key points**:
+- The bug is clear: missing RBAC resources
+- Realistic scenario: app needs to read config
+- Uses standard images
+
+## Step 5: Define validation rules
+
+### Kyverno policy (optional)
+
+If you want to prevent certain bad practices:
+
+Create `validation/kyverno/deny-privileged.yaml`:
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: deny-privileged-rbac-configmap
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: deny-privileged-containers
+      match:
+        resources:
+          kinds:
+            - Pod
+          namespaces:
+            - rbac-configmap-access
+      validate:
+        message: "Privileged containers are not allowed"
+        pattern:
+          spec:
+            containers:
+              - =(securityContext):
+                  =(privileged): false
+```
+
+### Static validation
+
+Create `validation/static/validation.yaml`:
+
+```yaml
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: StaticValidation
+metadata:
+  name: rbac-structure
+  namespace: rbac-configmap-access
+spec:
+  target:
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    name: configmap-reader
+  rulesConfigMap:
+    name: rbac-rules
+```
+
+Create `validation/static/rules-configmap.yaml`:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rbac-rules
+  namespace: rbac-configmap-access
+data:
+  role.rego: |
+    package kubeasy.challenge
+
+    violation[{"msg": msg}] {
+      not input.rules
+      msg := "Role must define rules"
+    }
+
+    violation[{"msg": msg}] {
+      count(input.rules) == 0
+      msg := "Role must have at least one rule"
+    }
+
+    violation[{"msg": msg}] {
+      rule := input.rules[_]
+      not rule.verbs
+      msg := "All rules must define verbs"
+    }
+
+    violation[{"msg": msg}] {
+      rule := input.rules[_]
+      not rule.resources
+      msg := "All rules must define resources"
+    }
+```
+
+### Dynamic validation
+
+Create `validation/dynamic/validation.yaml`:
+
+```yaml
+apiVersion: challenge.kubeasy.dev/v1alpha1
+kind: DynamicValidation
+metadata:
+  name: rbac-runtime
+  namespace: rbac-configmap-access
+spec:
+  target:
+    apiVersion: v1
+    kind: Pod
+    labelSelector:
+      matchLabels:
+        app: myapp
+  checks:
+    # Check pod is running
+    - kind: status
+      statusCheck:
+        condition: "Ready"
+        expectedStatus: "True"
+
+    # Verify ServiceAccount has permissions
+    - kind: rbac
+      rbacCheck:
+        serviceAccountName: app-sa
+        resourceAttributes:
+          - verb: get
+            resource: configmaps
+          - verb: list
+            resource: configmaps
+
+    # Check logs show successful access
+    - kind: logs
+      logCheck:
+        expectedString: "database_url"
+        sinceSeconds: 300
+```
+
+## Step 6: Create metadata
+
+Create `metadata.yaml`:
+
+```yaml
+id: rbac-configmap-access
+title: "RBAC: ConfigMap Access"
+description: |
+  A pod needs to read a ConfigMap but the ServiceAccount lacks permissions.
+  Create the necessary RBAC resources to grant access.
+
+difficulty: beginner
+estimatedTime: 15
+themes:
+  - rbac
+  - security
+  - troubleshooting
+
+objectives:
+  - "Understand ServiceAccount permissions"
+  - "Create Role and RoleBinding resources"
+  - "Debug RBAC permission errors"
+
+hints:
+  - "Check pod logs to see the permission error"
+  - "Create a Role that grants 'get' and 'list' on configmaps"
+  - "Bind the Role to the ServiceAccount using a RoleBinding"
+```
+
+## Step 7: Add learning context (optional)
+
+Create `README.md`:
+
+```markdown
+# RBAC: ConfigMap Access
+
+## Context
+
+Applications often need to read configuration from ConfigMaps. By default, ServiceAccounts have no permissions to access any resources.
+
+You must explicitly grant permissions using RBAC (Role-Based Access Control).
+
+## The Problem
+
+A pod is trying to read a ConfigMap but gets "Forbidden" errors because the ServiceAccount `app-sa` has no permissions.
+
+## Learning Objectives
+
+- Understand how ServiceAccounts work
+- Create Roles to define permissions
+- Use RoleBindings to grant permissions
+
+## Tips
+
+1. Check the pod logs to see the error:
+   ```bash
+   kubectl logs -l app=myapp -n rbac-configmap-access
+   ```
+
+2. You need to create:
+   - A **Role** that allows reading ConfigMaps
+   - A **RoleBinding** that connects the Role to the ServiceAccount
+
+3. Example Role structure:
+   ```yaml
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: Role
+   metadata:
+     name: configmap-reader
+     namespace: rbac-configmap-access
+   rules:
+     - apiGroups: [""]
+       resources: ["configmaps"]
+       verbs: ["get", "list"]
+   ```
+
+## References
+
+- [Kubernetes RBAC Documentation](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
+- [Using RBAC Authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
+```
+
+## Step 8: Test locally
+
+Now test your challenge to ensure it works:
+
+### 1. Setup the environment
+
+**Option A: Using Kubeasy CLI (recommended)**
+
+```bash
+# Install Kubeasy CLI if not already installed
+npm install -g @kubeasy-dev/kubeasy-cli
+
+# Setup creates cluster and installs all components
+kubeasy setup
+```
+
+This installs Kyverno, Challenge Operator, ArgoCD, and configures everything.
+
+**Option B: Manual setup**
+
+```bash
+# Create cluster
+kind create cluster --name kubeasy-test
+
+# Install Kyverno
+kubectl create -f https://github.com/kyverno/kyverno/releases/download/v1.11.0/install.yaml
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=kyverno -n kyverno --timeout=300s
+
+# Install Challenge Operator
+kubectl apply -f https://raw.githubusercontent.com/kubeasy-dev/challenge-operator/main/deploy/operator.yaml
+```
+
+### 2. Apply the challenge
+
+```bash
+kubectl apply -f manifests/
+kubectl apply -f validation/
+```
+
+### 3. Verify the problem
+
+Check that the pod shows permission errors:
+
+```bash
+kubectl get pods -n rbac-configmap-access
+kubectl logs -l app=myapp -n rbac-configmap-access
+```
+
+You should see "Forbidden" errors.
+
+### 4. Check validation status
+
+```bash
+kubectl get staticvalidation -n rbac-configmap-access
+kubectl get dynamicvalidation -n rbac-configmap-access
+```
+
+Both should show failures.
+
+### 5. Fix the challenge
+
+Create the RBAC resources:
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: configmap-reader
+  namespace: rbac-configmap-access
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-configmap-reader
+  namespace: rbac-configmap-access
+subjects:
+  - kind: ServiceAccount
+    name: app-sa
+roleRef:
+  kind: Role
+  name: configmap-reader
+  apiGroup: rbac.authorization.k8s.io
+EOF
+```
+
+### 6. Verify it's fixed
+
+Wait a moment, then check:
+
+```bash
+kubectl logs -l app=myapp -n rbac-configmap-access
+```
+
+Logs should now show the ConfigMap data.
+
+Check validation:
+
+```bash
+kubectl get dynamicvalidation rbac-runtime -n rbac-configmap-access -o yaml
+```
+
+All checks should pass (`status: Pass`).
+
+## Step 7: Submit a pull request
+
+Once your challenge works locally:
+
+```bash
+git checkout -b challenge/rbac-configmap-access
+git add .
+git commit -m "Add challenge: RBAC ConfigMap Access"
+git push origin challenge/rbac-configmap-access
+```
+
+Open a PR on GitHub with:
+
+```markdown
+## Challenge: RBAC ConfigMap Access
+
+### What does this challenge teach?
+This challenge teaches learners how to use RBAC to grant ServiceAccounts permissions to read ConfigMaps.
+
+### Difficulty and estimated time
+- Difficulty: Beginner
+- Estimated time: 15 minutes
+
+### Testing
+- [x] Created test cluster
+- [x] Applied manifests and verified the problem exists
+- [x] Created RBAC resources and verified validation passes
+- [x] Checked all validation types work correctly
+
+### Additional notes
+Simple beginner-friendly RBAC challenge with clear error messages and validation.
+```
+
+## Best practices checklist
+
+Before submitting, ensure:
+
+- [ ] Challenge ID matches directory name
+- [ ] Namespace matches challenge ID
+- [ ] All validations work (Kyverno, Static, Dynamic)
+- [ ] Metadata includes clear objectives and hints
+- [ ] README provides learning context
+- [ ] **NO solution directory included**
+- [ ] Challenge has been tested on fresh cluster
+- [ ] Manifests are minimal and focused
+
+## Common pitfalls
+
+### Problem: Challenge is too complex
+
+**Fix**: Focus on one concept. Don't combine RBAC + networking + storage.
+
+### Problem: Validation doesn't work
+
+**Fix**: Check operator logs and validation status carefully.
+
+### Problem: Error messages are unclear
+
+**Fix**: Write validation messages that guide learners.
+
+### Problem: Including a solution/
+
+**Fix**: **NEVER include solutions**. Learners must figure it out themselves!
+
+## Next steps
+
+Now that you've created your first challenge:
+
+- Read about [Validation Rules](/docs/developer/validation-rules) for advanced techniques
+- See [Testing Challenges](/docs/developer/testing-challenges) for comprehensive testing
+- Review [Contributing Guidelines](/docs/developer/contributing) for submission requirements
+
+Happy challenge building! 🚀
