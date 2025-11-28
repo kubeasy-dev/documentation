@@ -33,7 +33,6 @@ This allows multiple valid solutions and doesn't spoil the learning experience.
 | `log` | Find strings in container logs | "Connected to database", "Server started" |
 | `event` | Detect forbidden K8s events | No OOMKilled, no Evicted |
 | `metrics` | Check pod/deployment metrics | Restart count < 3, replicas >= 2 |
-| `rbac` | Test ServiceAccount permissions | Can create pods, can list secrets |
 | `connectivity` | HTTP connectivity tests | Service responds with 200 |
 
 ## Defining Validations
@@ -64,7 +63,7 @@ validations:
 | `title` | Yes | Short title shown in the UI |
 | `description` | Yes | What this validation checks |
 | `order` | No | Display order (lower = first) |
-| `type` | Yes | One of: status, log, event, metrics, rbac, connectivity |
+| `type` | Yes | One of: status, log, event, metrics, connectivity |
 | `spec` | Yes | Type-specific configuration |
 
 ## Validation Examples
@@ -189,30 +188,6 @@ Check pod or deployment metrics like restart count.
 ```
 
 **Available operators:** `LessThan`, `GreaterThan`, `Equals`
-
-### RBAC Validation
-
-Test if a ServiceAccount has required permissions.
-
-```yaml
-- key: sa-permissions
-  title: "ServiceAccount Permissions"
-  description: "Service account must have required access"
-  order: 5
-  type: rbac
-  spec:
-    serviceAccountName: my-service-account
-    requiredPermissions:
-      - resource: pods
-        verb: list
-      - resource: configmaps
-        verb: get
-      - resource: secrets
-        verb: get
-        resourceName: app-secrets  # Optional: specific resource
-```
-
-**Available verbs:** `get`, `list`, `watch`, `create`, `update`, `patch`, `delete`
 
 ### Connectivity Validation
 
