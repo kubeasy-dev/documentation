@@ -7,40 +7,41 @@ Kubeasy combines several open-source tools to create an isolated, validated lear
 
 This page explains the technical architecture and how each component interacts.
 
-## Architecture overview
+## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        Your Machine                          │
 │                                                               │
 │  ┌──────────────┐                                            │
-│  │ Kubeasy CLI  │  (Go binary)                               │
-│  │   (Cobra)    │                                            │
+│  │ Kubeasy CLI  │  (Go + Cobra)                              │
+│  │   Manages    │                                            │
+│  │   Validates  │                                            │
 │  └──────┬───────┘                                            │
 │         │                                                     │
-│         │ Manages                                             │
+│         │ Creates & Queries                                   │
 │         ▼                                                     │
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │            Kind Cluster (Local K8s)                      ││
 │  │                                                           ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐ ││
-│  │  │   ArgoCD     │  │   Kyverno    │  │   Challenge   │ ││
-│  │  │              │  │              │  │   Operator    │ ││
-│  │  │ Deploys      │  │ Policy       │  │               │ ││
-│  │  │ Challenges   │  │ Engine       │  │ Validates     │ ││
-│  │  └──────────────┘  └──────────────┘  └───────────────┘ ││
+│  │  ┌──────────────┐  ┌──────────────┐                     ││
+│  │  │   ArgoCD     │  │   Kyverno    │                     ││
+│  │  │              │  │              │                     ││
+│  │  │ Deploys      │  │ Prevents     │                     ││
+│  │  │ Challenges   │  │ Bypasses     │                     ││
+│  │  └──────────────┘  └──────────────┘                     ││
 │  │                                                           ││
 │  │  ┌─────────────────────────────────────────────────────┐││
 │  │  │  Challenge Namespaces (isolated)                    │││
+│  │  │  • challenge-pod-evicted                            │││
 │  │  │  • challenge-rbac-basics                            │││
-│  │  │  • challenge-network-policy-debug                   │││
 │  │  │  • ...                                               │││
 │  │  └─────────────────────────────────────────────────────┘││
 │  └─────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Component breakdown
+## Component Breakdown
 
 ### 1. Kubeasy CLI
 
@@ -49,16 +50,17 @@ The CLI is built with **Go** and uses the **Cobra** framework for command-line p
 **Responsibilities:**
 - Authenticates users via API tokens
 - Sets up the local Kind cluster
-- Deploys infrastructure components (ArgoCD, Kyverno, Operator)
+- Deploys infrastructure components (ArgoCD, Kyverno)
 - Starts/stops/resets challenges
-- Retrieves validation results from the operator
-- Submits results to the Kubeasy web platform
+- **Executes validations** directly against the cluster
+- Submits results to the Kubeasy platform
 
 **Key Commands:**
 ```bash
-kubeasy setup           # Bootstrap the local cluster
-kubeasy challenge start # Apply challenge manifests
-kubeasy challenge submit # Run validation and submit results
+kubeasy init              # Bootstrap the local cluster
+kubeasy challenge start   # Deploy challenge manifests
+kubeasy challenge submit  # Run validations and submit results
+kubeasy challenge reset   # Clean up and restart
 ```
 
 ### 2. Kind (Kubernetes in Docker)
@@ -71,10 +73,11 @@ kubeasy challenge submit # Run validation and submit results
 - No cloud dependencies
 - Realistic Kubernetes environment
 
-When you run `kubeasy setup`, the CLI:
+When you run `kubeasy init`, the CLI:
 1. Checks if a Kind cluster named `kubeasy` exists
 2. Creates it if needed (single control-plane node)
 3. Configures `kubectl` to point to this cluster
+4. Installs ArgoCD and Kyverno
 
 ### 3. ArgoCD
 
@@ -87,12 +90,12 @@ When you run `kubeasy setup`, the CLI:
 
 When you start a challenge:
 ```bash
-kubeasy challenge start rbac-basics
+kubeasy challenge start pod-evicted
 ```
 
 The CLI creates an ArgoCD Application that pulls manifests from:
 ```
-https://github.com/kubeasy-dev/challenges/tree/main/rbac-basics
+https://github.com/kubeasy-dev/challenges/tree/main/pod-evicted/manifests
 ```
 
 ### 4. Kyverno
@@ -100,108 +103,130 @@ https://github.com/kubeasy-dev/challenges/tree/main/rbac-basics
 [Kyverno](https://kyverno.io/) is a Kubernetes-native policy engine.
 
 **Role in Kubeasy:**
-- Enforces static validation rules on Kubernetes resources
-- Prevents invalid configurations from being applied
-- Provides immediate feedback on policy violations
+- **Prevents bypasses** - Stops users from cheating (e.g., replacing broken app with working one)
+- Enforces policies defined in each challenge's `policies/` folder
 
-Example use case:
-- A challenge requires a Pod to have resource limits
-- Kyverno validates that `resources.limits` are set
-- If missing, the validation fails
-
-### 5. Challenge Operator
-
-The **Challenge Operator** is a custom Kubernetes operator built specifically for Kubeasy.
-
-**Role:**
-- Performs **dynamic validation** (runtime checks)
-- Monitors the state of resources in a challenge namespace
-- Exposes validation results via Custom Resources (CRs)
-
-**How it works:**
-
-1. Each challenge defines validation criteria in a `ChallengeValidation` CR:
+**Example bypass prevention:**
 ```yaml
-apiVersion: kubeasy.dev/v1alpha1
-kind: ChallengeValidation
+# Prevents changing the container image
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
 metadata:
-  name: rbac-basics
-  namespace: challenge-rbac-basics
+  name: protect-challenge-image
 spec:
-  checks:
-    - name: pod-running
-      type: PodStatus
-      target: my-app
-      expected: Running
-    - name: service-accessible
-      type: HTTPEndpoint
-      url: http://my-app:8080/health
-      expectedStatus: 200
+  validationFailureAction: Enforce
+  rules:
+    - name: preserve-image
+      match:
+        resources:
+          kinds: ["Deployment"]
+          namespaces: ["challenge-*"]
+      validate:
+        message: "Cannot change the application image"
+        pattern:
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: app
+                    image: "kubeasy/broken-app:v1"
 ```
 
-2. The operator continuously reconciles this CR
-3. It runs checks and updates the `.status` field with results
-4. The CLI reads this status when you run `kubeasy challenge submit`
+**Note:** Kyverno is NOT used for challenge validation. It only prevents bypasses. Validation is handled by the CLI.
 
-**Static vs Dynamic validation:**
+### 5. CLI-Based Validation
 
-| Type | Performed by | When | Example |
-|------|--------------|------|---------|
-| **Static** | Kyverno | At apply time | Resource limits, labels, annotations |
-| **Dynamic** | Operator | At runtime | Pod status, service connectivity, logs |
+Instead of a Kubernetes operator, Kubeasy uses **CLI-based validation**. The CLI reads validation definitions from `challenge.yaml` and executes checks directly against the cluster.
 
-## Challenge lifecycle
+**Validation types:**
+
+| Type | What it checks |
+|------|----------------|
+| `status` | Resource conditions (Pod Ready, Deployment Available) |
+| `log` | Strings in container logs |
+| `event` | Forbidden Kubernetes events (OOMKilled, Evicted) |
+| `metrics` | Pod metrics (restart count) |
+| `rbac` | ServiceAccount permissions |
+| `connectivity` | HTTP connectivity between pods |
+
+**Example validation definition:**
+```yaml
+# In challenge.yaml
+validations:
+  - key: pod-ready
+    title: "Pod Ready"
+    description: "The pod must be running"
+    order: 1
+    type: status
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      conditions:
+        - type: Ready
+          status: "True"
+```
+
+When you run `kubeasy challenge submit`, the CLI:
+1. Loads validations from the challenge definition
+2. Executes each validation against the cluster
+3. Sends structured results to the backend
+4. Backend verifies all expected objectives are present
+
+## Challenge Lifecycle
 
 Here's what happens during a typical challenge:
 
-### Starting a challenge
+### Starting a Challenge
 
 ```bash
-kubeasy challenge start network-policy-debug
+kubeasy challenge start pod-evicted
 ```
 
 1. CLI fetches challenge metadata from the API
 2. Creates an ArgoCD Application pointing to the challenge manifests
-3. ArgoCD deploys resources into a dedicated namespace: `challenge-network-policy-debug`
-4. The Challenge Operator detects the new namespace and starts monitoring
+3. ArgoCD deploys resources into a dedicated namespace: `challenge-pod-evicted`
+4. Kyverno policies are applied to prevent bypasses
 5. Your `kubectl` context switches to this namespace
 
-### Working on the challenge
+### Working on the Challenge
 
 You now have full access to investigate and fix the problem:
 
 ```bash
 kubectl get pods                    # Inspect resources
 kubectl logs my-broken-pod          # Check logs
-kubectl describe networkpolicy np1  # Debug policies
+kubectl describe pod my-broken-pod  # See events
 kubectl edit deployment my-app      # Make changes
 ```
 
-The cluster behaves like a real Kubernetes environment.
+The cluster behaves like a real Kubernetes environment. Use your debugging skills to find and fix the issue.
 
-### Submitting a solution
+### Submitting a Solution
 
 ```bash
-kubeasy challenge submit network-policy-debug
+kubeasy challenge submit pod-evicted
 ```
 
-1. CLI queries the Challenge Operator for validation results
-2. Operator runs all dynamic checks (Pod status, connectivity, etc.)
-3. Kyverno reports any static validation failures
-4. Results are aggregated and sent to the Kubeasy platform
-5. You can view detailed feedback on the web interface
+1. CLI loads validations from `challenge.yaml`
+2. Executes each validation against the cluster
+3. Builds structured payload with per-validation results
+4. Sends results to the Kubeasy backend
+5. Backend verifies ALL objectives are present and passed
+6. XP awarded if successful
 
-### Cleaning up
+### Resetting
 
 ```bash
-kubeasy challenge clean network-policy-debug
+kubeasy challenge reset pod-evicted
 ```
 
 - Deletes the ArgoCD Application
 - Removes the namespace and all resources
-- Leaves your cluster ready for the next challenge
+- Redeploys the challenge in its original broken state
 
-## Data flow diagram
+## Data Flow Diagram
 
 ```
 ┌─────────────┐
@@ -215,27 +240,27 @@ kubeasy challenge clean network-policy-debug
 │  (Go binary)    │
 └──────┬──────────┘
        │
-       ├─────────────────┐
-       │                 │
-       ▼                 ▼
-┌──────────────┐   ┌─────────────────┐
-│   ArgoCD     │   │ Challenge       │
-│   Deploys    │   │ Operator        │
-│   Manifests  │   │ Validates       │
-└──────┬───────┘   └────────┬────────┘
-       │                    │
-       ▼                    ▼
-┌─────────────────────────────────┐
-│     Challenge Namespace          │
+       ├─────────────────────────────────┐
+       │                                 │
+       ▼                                 ▼
+┌──────────────┐              ┌──────────────────┐
+│   ArgoCD     │              │  CLI Validation  │
+│   Deploys    │              │  Engine          │
+│   Manifests  │              │  (executes       │
+└──────┬───────┘              │   checks)        │
+       │                      └────────┬─────────┘
+       ▼                               │
+┌─────────────────────────────────┐    │
+│     Challenge Namespace          │◄───┘
 │  (Isolated Kubernetes resources) │
 └─────────────────────────────────┘
 ```
 
-## Security & isolation
+## Security & Isolation
 
 Each challenge runs in its own namespace with:
 - **RBAC restrictions**: You can only access your challenge namespace
-- **Network policies**: Challenges cannot interfere with each other
+- **Kyverno policies**: Prevent bypasses and cheating
 - **Resource quotas**: Prevents resource exhaustion
 
 The Kind cluster is entirely local:
@@ -243,28 +268,46 @@ The Kind cluster is entirely local:
 - No cloud credentials required
 - Full control over the environment
 
-## What gets installed during setup?
+### Backend Security
 
-When you run `kubeasy setup`, the CLI installs:
+The backend validates submissions by:
+1. Checking ALL registered objectives are present (can't skip objectives)
+2. Checking no unknown objectives are submitted (can't invent objectives)
+3. Verifying each objective has `passed: true` for challenge completion
+
+## What Gets Installed During Setup?
+
+When you run `kubeasy init`, the CLI installs:
 
 | Component | Purpose | Namespace |
 |-----------|---------|-----------|
 | ArgoCD | GitOps deployment | `argocd` |
-| Kyverno | Policy validation | `kyverno` |
-| Challenge Operator | Dynamic validation | `kubeasy-system` |
-| Monitoring (optional) | Metrics collection | `monitoring` |
+| Kyverno | Bypass prevention | `kyverno` |
 
 You can inspect these at any time:
 
 ```bash
 kubectl get pods -n argocd
 kubectl get pods -n kyverno
-kubectl get pods -n kubeasy-system
 ```
 
-## Further reading
+## Philosophy: Why CLI-Based Validation?
+
+Previous versions of Kubeasy used:
+1. Rego-based policies (complex, hard to write)
+2. Kubernetes operator with CRDs (complex infrastructure)
+
+The current CLI-based approach offers:
+- **Simplicity** - One `challenge.yaml` file contains everything
+- **No extra infrastructure** - CLI handles all validation logic
+- **Easy testing** - Run validations locally without CRDs
+- **Better error messages** - CLI provides detailed failure feedback
+- **Faster iteration** - No operator reconciliation delays
+
+## Further Reading
 
 - [Kind Documentation](https://kind.sigs.k8s.io/)
 - [ArgoCD Concepts](https://argo-cd.readthedocs.io/en/stable/core_concepts/)
 - [Kyverno Policies](https://kyverno.io/policies/)
-- [Kubernetes Operators](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
+- [Challenge Structure](/docs/developer/challenge-structure)
+- [Validation Rules](/docs/developer/validation-rules)

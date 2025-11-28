@@ -1,627 +1,427 @@
 ---
 title: Validation Rules
-description: How to define success criteria for challenges using Kyverno policies and Challenge Operator validations.
+description: How to define success criteria for challenges using the CLI-based validation system.
 ---
 
-Validation rules define when a challenge is considered "solved". Kubeasy uses three complementary validation systems working together.
+Validation rules define when a challenge is considered "solved". Kubeasy uses a **CLI-based validation system** where validations are defined in `challenge.yaml` and executed directly against the Kubernetes cluster.
 
-## Validation types overview
+## Philosophy: Validate Outcomes, Not Implementations
 
-| Type | Purpose | When to use |
-|------|---------|-------------|
-| **Kyverno Policies** | Prevent cheating/bypassing challenges | Block attempts to circumvent the challenge (privileged pods, hostPath, etc.) |
-| **StaticValidation** | Validate manifest structure | Check resource configuration matches requirements |
-| **DynamicValidation** | Validate runtime behavior | Verify application actually works correctly |
+The key principle of Kubeasy validations is to **check that the problem is fixed**, not how it was fixed.
 
-## 1. Kyverno Policies
-
-Kyverno is a Kubernetes admission controller that prevents users from **cheating or bypassing challenges**.
-
-### Purpose
-
-Use Kyverno to **prevent learners from circumventing challenges** by:
-- Creating privileged pods to escape restrictions
-- Using hostPath volumes to access cluster resources
-- Running containers as root to bypass security constraints
-- Deploying resources that sidestep the challenge's learning objectives
-
-**Think of Kyverno as the challenge's anti-cheat system** - it blocks attempts to work around the problem instead of solving it properly.
-
-### Basic policy structure
-
+**Bad validation** (reveals the solution):
 ```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata:
-  name: <policy-name>
-spec:
-  validationFailureAction: Enforce  # Block invalid resources
-  background: false                  # Don't validate existing resources
-  rules:
-    - name: <rule-name>
-      match:
-        resources:
-          kinds:
-            - <Kind>
-          namespaces:
-            - <namespace>  # Scope to challenge namespace
-      validate:
-        message: "Error message shown to user"
-        pattern:
-          # Expected resource structure
+- key: memory-limit-fixed
+  title: "Memory Limit Set to 256Mi"
+  description: "Container memory limit must be 256Mi"
 ```
 
-### Common use cases
+**Good validation** (checks outcome):
+```yaml
+- key: stable-operation
+  title: "Stable Operation"
+  description: "Pod must run without crashing"
+```
 
-#### Require resource limits
+This allows multiple valid solutions and doesn't spoil the learning experience.
+
+## Validation Types
+
+| Type | Purpose | Example Use Case |
+|------|---------|------------------|
+| `status` | Check resource conditions | Pod Ready, Deployment Available |
+| `log` | Find strings in container logs | "Connected to database", "Server started" |
+| `event` | Detect forbidden K8s events | No OOMKilled, no Evicted |
+| `metrics` | Check pod/deployment metrics | Restart count < 3, replicas >= 2 |
+| `rbac` | Test ServiceAccount permissions | Can create pods, can list secrets |
+| `connectivity` | HTTP connectivity tests | Service responds with 200 |
+
+## Defining Validations
+
+All validations are defined in the `validations` section of `challenge.yaml`:
 
 ```yaml
+title: Pod Evicted
+description: |
+  A pod keeps crashing...
+# ... other metadata
+
+validations:
+  - key: unique-identifier
+    title: "User-Friendly Title"
+    description: "What this checks (not how to fix it)"
+    order: 1
+    type: status
+    spec:
+      # Type-specific configuration
+```
+
+### Common Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `key` | Yes | Unique identifier for this validation |
+| `title` | Yes | Short title shown in the UI |
+| `description` | Yes | What this validation checks |
+| `order` | No | Display order (lower = first) |
+| `type` | Yes | One of: status, log, event, metrics, rbac, connectivity |
+| `spec` | Yes | Type-specific configuration |
+
+## Validation Examples
+
+### Status Validation
+
+Check if a resource has specific conditions (Ready, Available, etc.)
+
+```yaml
+- key: pod-ready-check
+  title: "Pod Ready"
+  description: "The application pod must be running and healthy"
+  order: 1
+  type: status
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
+    conditions:
+      - type: Ready
+        status: "True"
+```
+
+**For Deployments:**
+
+```yaml
+- key: deployment-available
+  title: "Deployment Available"
+  description: "All replicas must be available"
+  order: 1
+  type: status
+  spec:
+    target:
+      kind: Deployment
+      name: my-deployment
+    conditions:
+      - type: Available
+        status: "True"
+```
+
+### Log Validation
+
+Find expected strings in container logs.
+
+```yaml
+- key: database-connection
+  title: "Database Connected"
+  description: "The application must connect to the database"
+  order: 2
+  type: log
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: api-service
+    expectedStrings:
+      - "Connected to database successfully"
+    sinceSeconds: 120
+```
+
+**With specific container:**
+
+```yaml
+- key: sidecar-logs
+  title: "Sidecar Running"
+  description: "The sidecar container must be logging"
+  type: log
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
+    containerName: sidecar
+    expectedStrings:
+      - "Sidecar initialized"
+    sinceSeconds: 60
+```
+
+### Event Validation
+
+Detect forbidden Kubernetes events (useful for checking stability).
+
+```yaml
+- key: no-crashes
+  title: "No Crash Events"
+  description: "The pod should not experience crashes or evictions"
+  order: 3
+  type: event
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: data-processor
+    forbiddenReasons:
+      - "OOMKilled"
+      - "Evicted"
+      - "BackOff"
+      - "FailedScheduling"
+    sinceSeconds: 300
+```
+
+### Metrics Validation
+
+Check pod or deployment metrics like restart count.
+
+```yaml
+- key: low-restarts
+  title: "Low Restart Count"
+  description: "Pod must be stable without excessive restarts"
+  order: 4
+  type: metrics
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
+    metricChecks:
+      - metric: restartCount
+        operator: LessThan
+        value: 3
+```
+
+**Available operators:** `LessThan`, `GreaterThan`, `Equals`
+
+### RBAC Validation
+
+Test if a ServiceAccount has required permissions.
+
+```yaml
+- key: sa-permissions
+  title: "ServiceAccount Permissions"
+  description: "Service account must have required access"
+  order: 5
+  type: rbac
+  spec:
+    serviceAccountName: my-service-account
+    requiredPermissions:
+      - resource: pods
+        verb: list
+      - resource: configmaps
+        verb: get
+      - resource: secrets
+        verb: get
+        resourceName: app-secrets  # Optional: specific resource
+```
+
+**Available verbs:** `get`, `list`, `watch`, `create`, `update`, `patch`, `delete`
+
+### Connectivity Validation
+
+Test HTTP connectivity between pods.
+
+```yaml
+- key: service-reachable
+  title: "Service Connectivity"
+  description: "The backend must be reachable"
+  order: 6
+  type: connectivity
+  spec:
+    sourcePod:
+      labelSelector:
+        app: client
+    targets:
+      - url: "http://backend-service:8080/health"
+        expectedStatusCode: 200
+        timeoutSeconds: 5
+```
+
+**With custom headers (useful for Ingress testing):**
+
+```yaml
+- key: ingress-routing
+  title: "Ingress Routing"
+  description: "Traffic must route through ingress"
+  type: connectivity
+  spec:
+    sourcePod:
+      labelSelector:
+        app: client
+    targets:
+      - url: "http://ingress-nginx-controller.ingress-nginx.svc.cluster.local"
+        headers:
+          Host: "api.local"
+        expectedStatusCode: 200
+        timeoutSeconds: 5
+```
+
+## Kyverno Policies
+
+Kyverno policies prevent users from **bypassing the challenge** (e.g., replacing the broken app with a working one).
+
+### What to Protect
+
+- **Container images** - Prevent replacing the application
+- **Critical volume mounts** - Prevent removing problematic configs
+- **Essential labels** - Ensure validations can find resources
+
+### Example Policy
+
+```yaml
+# policies/protect.yaml
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: require-limits
+  name: protect-challenge-image
 spec:
   validationFailureAction: Enforce
-  background: false
   rules:
-    - name: check-container-limits
+    - name: preserve-image
       match:
         resources:
-          kinds:
-            - Pod
-          namespaces:
-            - my-challenge  # Replace with your challenge namespace
+          kinds: ["Deployment"]
+          names: ["my-app"]
+          namespaces: ["challenge-*"]
       validate:
-        message: "All containers must have CPU and memory limits"
+        message: "Cannot change the application image"
         pattern:
           spec:
-            containers:
-              - resources:
-                  limits:
-                    memory: "?*"  # Must exist
-                    cpu: "?*"
+            template:
+              spec:
+                containers:
+                  - name: app
+                    image: "kubeasy/broken-app:v1"
 ```
 
-#### Block privileged containers
+### What NOT to Protect
+
+Users should be free to:
+- Modify resource limits/requests
+- Add environment variables
+- Change probe configurations
+- Add/modify labels and annotations
+- Scale deployments
+
+## Complete Example
+
+Here's a complete `challenge.yaml` with multiple validations:
 
 ```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata:
-  name: deny-privileged
-spec:
-  validationFailureAction: Enforce
-  background: false
-  rules:
-    - name: deny-privileged-containers
-      match:
-        resources:
-          kinds:
-            - Pod
-          namespaces:
-            - my-challenge
-      validate:
-        message: "Privileged containers are not allowed"
-        pattern:
-          spec:
-            containers:
-              - =(securityContext):
-                  =(privileged): false
+title: Pod Evicted
+description: |
+  A data processing pod keeps crashing and getting evicted.
+  It was working fine yesterday, but now Kubernetes keeps killing it.
+theme: resources-scaling
+difficulty: easy
+estimated_time: 15
+initial_situation: |
+  A data processing application is deployed as a single pod.
+  The pod starts successfully but after a few seconds gets killed.
+  It enters a CrashLoopBackOff state and keeps restarting.
+objective: |
+  Fix the pod so it can run without being evicted.
+  Understand why Kubernetes is killing the application.
+
+validations:
+  - key: pod-running
+    title: "Pod Ready"
+    description: "The data-processor pod must be running and healthy"
+    order: 1
+    type: status
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      conditions:
+        - type: Ready
+          status: "True"
+
+  - key: no-eviction
+    title: "No Crash Events"
+    description: "The pod should run stably without being killed"
+    order: 2
+    type: event
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      forbiddenReasons:
+        - "Evicted"
+        - "OOMKilled"
+      sinceSeconds: 300
+
+  - key: low-restarts
+    title: "Stable Operation"
+    description: "The pod must not restart excessively"
+    order: 3
+    type: metrics
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      metricChecks:
+        - metric: restartCount
+          operator: LessThan
+          value: 3
 ```
 
-#### Require labels
+## Anti-Patterns
+
+### Don't reveal the solution in validation titles
 
 ```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata:
-  name: require-labels
-spec:
-  validationFailureAction: Enforce
-  background: false
-  rules:
-    - name: check-labels
-      match:
-        resources:
-          kinds:
-            - Pod
-          namespaces:
-            - my-challenge
-      validate:
-        message: "Pods must have 'app' and 'version' labels"
-        pattern:
-          metadata:
-            labels:
-              app: "?*"
-              version: "?*"
+# BAD
+- key: memory-limit
+  title: "Memory Limit Increased to 256Mi"
+
+# GOOD
+- key: stable-operation
+  title: "Stable Operation"
 ```
 
-### Kyverno pattern syntax
-
-- `"?*"` - Field must exist with any value
-- `"?!*"` - Field must not exist
-- `=(field)` - Field is optional
-- `>10` - Numeric greater than
-- `<100` - Numeric less than
-
-### Best practices
-
-1. **Scope to challenge namespace**: Always specify namespace in `match.resources.namespaces`
-2. **Clear error messages**: Explain what's wrong and how to fix it
-3. **Use Enforce mode**: `validationFailureAction: Enforce` to actually block resources
-4. **Disable background**: `background: false` to only validate new/updated resources
-
-## 2. StaticValidation (Challenge Operator)
-
-StaticValidation validates the **structure** of resources using Rego (Open Policy Agent) rules.
-
-### Purpose
-
-Use StaticValidation to **check manifest configuration** matches requirements:
-- Resource limits are within acceptable ranges
-- Labels contain correct values
-- Configuration follows best practices
-- Specific fields are set correctly
-
-**Think of StaticValidation as a code review** - it checks if manifests are configured correctly.
-
-### Basic structure
+### Don't be too specific about implementation
 
 ```yaml
-apiVersion: challenge.kubeasy.dev/v1alpha1
-kind: StaticValidation
-metadata:
-  name: <validation-name>
-  namespace: <challenge-namespace>
-spec:
-  target:
-    apiVersion: v1
-    kind: Pod  # Resource type to validate
-    labelSelector:
-      matchLabels:
-        app: web-app
-  rulesConfigMap:
-    name: <configmap-name>
+# BAD
+- key: probe-check
+  title: "Liveness Probe Uses /healthz Endpoint"
+
+# GOOD
+- key: health-checks
+  title: "Health Checks Pass"
 ```
 
-### Writing Rego rules
-
-Create a ConfigMap with `.rego` files:
+### Don't check implementation details
 
 ```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: validation-rules
-  namespace: my-challenge
-data:
-  limits.rego: |
-    package kubeasy.challenge
+# BAD - Forces specific solution
+- key: secret-volume
+  title: "Secret Mounted at /etc/credentials"
+  type: status
+  spec:
+    # Checks for specific volume mount path
 
-    violation[{"msg": msg}] {
-      container := input.spec.containers[_]
-      not container.resources.limits.cpu
-      msg := sprintf("Container %s missing CPU limit", [container.name])
-    }
-
-    violation[{"msg": msg}] {
-      container := input.spec.containers[_]
-      not container.resources.limits.memory
-      msg := sprintf("Container %s missing memory limit", [container.name])
-    }
+# GOOD - Checks the app works
+- key: authentication
+  title: "Application Authenticated"
+  type: log
+  spec:
+    expectedStrings:
+      - "Authentication successful"
 ```
 
-### Common validation patterns
-
-#### Check resource limits are set
-
-```go
-package kubeasy.challenge
-
-violation[{"msg": msg}] {
-  container := input.spec.containers[_]
-  not container.resources.limits
-  msg := sprintf("Container %s must have resource limits", [container.name])
-}
-```
-
-#### Verify labels exist
-
-```go
-package kubeasy.challenge
-
-violation[{"msg": msg}] {
-  not input.metadata.labels.app
-  msg := "Pod must have 'app' label"
-}
-
-violation[{"msg": msg}] {
-  not input.metadata.labels.environment
-  msg := "Pod must have 'environment' label"
-}
-```
-
-#### Check security context
-
-```go
-package kubeasy.challenge
-
-violation[{"msg": msg}] {
-  not input.spec.securityContext.runAsNonRoot
-  msg := "Pod must run as non-root user"
-}
-
-violation[{"msg": msg}] {
-  container := input.spec.containers[_]
-  container.securityContext.privileged == true
-  msg := sprintf("Container %s cannot run as privileged", [container.name])
-}
-```
-
-#### Validate values are in range
-
-```go
-package kubeasy.challenge
-
-import future.keywords.in
-
-violation[{"msg": msg}] {
-  container := input.spec.containers[_]
-  cpu_limit := container.resources.limits.cpu
-  # Convert to millicores for comparison
-  not cpu_limit in ["100m", "200m", "500m", "1"]
-  msg := sprintf("Container %s has invalid CPU limit: %s", [container.name, cpu_limit])
-}
-```
-
-### Accessing resource fields
-
-In Rego, `input` contains the full resource:
-
-```go
-# Metadata
-input.metadata.name
-input.metadata.labels.app
-input.metadata.annotations
-
-# Spec
-input.spec.containers[_].name
-input.spec.containers[_].image
-input.spec.containers[_].resources.limits.cpu
-input.spec.serviceAccountName
-input.spec.volumes[_].persistentVolumeClaim.claimName
-
-# Status (if available)
-input.status.phase
-input.status.conditions[_]
-```
-
-## 3. DynamicValidation (Challenge Operator)
-
-DynamicValidation validates **runtime behavior** using built-in checks.
-
-### Purpose
-
-Use DynamicValidation to **verify the application works**:
-- Pods are running and ready
-- Logs show expected output
-- ServiceAccounts have correct permissions
-- Jobs complete successfully
-
-**Think of DynamicValidation as functional testing** - it checks if things actually work.
-
-### Available check types
-
-#### logs - Verify log output
-
-Checks if pod logs contain expected string.
-
-```yaml
-apiVersion: challenge.kubeasy.dev/v1alpha1
-kind: DynamicValidation
-metadata:
-  name: log-validation
-  namespace: my-challenge
-spec:
-  target:
-    apiVersion: v1
-    kind: Pod
-    labelSelector:
-      matchLabels:
-        app: web-app
-  checks:
-    - kind: logs
-      logCheck:
-        expectedString: "Server started successfully"
-        container: nginx  # Optional: specify container
-        sinceSeconds: 300  # Optional: only check recent logs
-```
-
-**Use for**:
-- Verify application started correctly
-- Check for expected initialization messages
-- Confirm configuration was loaded
-
-#### status - Check resource conditions
-
-Validates resource status conditions.
-
-```yaml
-apiVersion: challenge.kubeasy.dev/v1alpha1
-kind: DynamicValidation
-metadata:
-  name: status-validation
-  namespace: my-challenge
-spec:
-  target:
-    apiVersion: v1
-    kind: Pod
-    labelSelector:
-      matchLabels:
-        app: web-app
-  checks:
-    - kind: status
-      statusCheck:
-        condition: "Ready"
-        expectedStatus: "True"
-        timeoutSeconds: 60  # Optional
-```
-
-**Common conditions**:
-- Pods: `Ready`, `PodScheduled`, `Initialized`, `ContainersReady`
-- Jobs: `Complete`, `Failed`
-- Deployments: `Available`, `Progressing`
-
-**For Jobs**:
-
-```yaml
-spec:
-  target:
-    apiVersion: batch/v1
-    kind: Job
-    name: batch-job
-  checks:
-    - kind: status
-      statusCheck:
-        condition: "Complete"
-        expectedStatus: "True"
-```
-
-#### rbac - Verify ServiceAccount permissions
-
-Checks if ServiceAccount has required permissions.
-
-```yaml
-apiVersion: challenge.kubeasy.dev/v1alpha1
-kind: DynamicValidation
-metadata:
-  name: rbac-validation
-  namespace: my-challenge
-spec:
-  target:
-    apiVersion: v1
-    kind: Pod
-    labelSelector:
-      matchLabels:
-        app: web-app
-  checks:
-    - kind: rbac
-      rbacCheck:
-        serviceAccountName: web-app-sa
-        resourceAttributes:
-          - verb: get
-            resource: configmaps
-          - verb: list
-            resource: pods
-          - verb: get
-            resource: secrets
-            name: app-secrets  # Optional: specific resource
-```
-
-**Available verbs**: `get`, `list`, `watch`, `create`, `update`, `patch`, `delete`
-
-## Complete validation example
-
-Here's how all three types work together for a complete challenge:
-
-```yaml
----
-# 1. Kyverno: Prevent privileged pods and pods without limits
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata:
-  name: enforce-security
-spec:
-  validationFailureAction: Enforce
-  background: false
-  rules:
-    - name: deny-privileged
-      match:
-        resources:
-          kinds:
-            - Pod
-          namespaces:
-            - my-challenge
-      validate:
-        message: "Privileged containers are not allowed"
-        pattern:
-          spec:
-            containers:
-              - =(securityContext):
-                  =(privileged): false
-
-    - name: require-limits
-      match:
-        resources:
-          kinds:
-            - Pod
-          namespaces:
-            - my-challenge
-      validate:
-        message: "All containers must have resource limits"
-        pattern:
-          spec:
-            containers:
-              - resources:
-                  limits:
-                    memory: "?*"
-                    cpu: "?*"
-
----
-# 2. StaticValidation: Verify manifest structure
-apiVersion: challenge.kubeasy.dev/v1alpha1
-kind: StaticValidation
-metadata:
-  name: structure-validation
-  namespace: my-challenge
-spec:
-  target:
-    apiVersion: v1
-    kind: Pod
-    labelSelector:
-      matchLabels:
-        app: web-app
-  rulesConfigMap:
-    name: static-rules
-
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: static-rules
-  namespace: my-challenge
-data:
-  security.rego: |
-    package kubeasy.challenge
-
-    violation[{"msg": msg}] {
-      not input.spec.securityContext.runAsNonRoot
-      msg := "Pod must run as non-root"
-    }
-
-    violation[{"msg": msg}] {
-      container := input.spec.containers[_]
-      mem_limit := container.resources.limits.memory
-      # Memory limit should be reasonable (not too high)
-      # This is a simplified check - real validation would parse the value
-      contains(mem_limit, "Gi")
-      msg := sprintf("Container %s memory limit too high: %s", [container.name, mem_limit])
-    }
-
----
-# 3. DynamicValidation: Verify runtime behavior
-apiVersion: challenge.kubeasy.dev/v1alpha1
-kind: DynamicValidation
-metadata:
-  name: runtime-validation
-  namespace: my-challenge
-spec:
-  target:
-    apiVersion: v1
-    kind: Pod
-    labelSelector:
-      matchLabels:
-        app: web-app
-  checks:
-    # Pod is running and ready
-    - kind: status
-      statusCheck:
-        condition: "Ready"
-        expectedStatus: "True"
-
-    # Application started correctly
-    - kind: logs
-      logCheck:
-        expectedString: "Server listening on port 8080"
-
-    # ServiceAccount has correct permissions
-    - kind: rbac
-      rbacCheck:
-        serviceAccountName: web-app-sa
-        resourceAttributes:
-          - verb: get
-            resource: configmaps
-          - verb: list
-            resource: secrets
-```
-
-## How they work together
-
-1. **Learner creates/updates resource** → Kyverno checks it first
-   - If Kyverno blocks it → resource creation fails, learner sees error
-   - If Kyverno allows it → resource is created
-
-2. **Resource exists** → Challenge Operator validates it
-   - StaticValidation checks manifest structure (every 30 seconds)
-   - DynamicValidation checks runtime behavior (every 30 seconds)
-
-3. **Challenge is solved when**:
-   - All Kyverno policies pass (resource can be created)
-   - All StaticValidation rules pass (structure is correct)
-   - All DynamicValidation checks pass (behavior is correct)
-
-## Best practices
-
-### Kyverno
-
-- **Scope to namespace**: Always specify the challenge namespace
-- **Clear messages**: Users see these when resources are blocked
-- **Test policies**: Verify they block invalid resources but allow valid ones
-
-### StaticValidation
-
-- **Focused rules**: One ConfigMap per validation concern
-- **Descriptive violations**: Include resource name and field in message
-- **Test with `opa`**: Use OPA CLI to test rules locally
-
-### DynamicValidation
-
-- **Appropriate checks**:
-  - `logs` for application output
-  - `status` for resource readiness
-  - `rbac` for permission verification
-- **Container names**: Specify container if pod has multiple
-- **Timeouts**: Add `timeoutSeconds` for slow-starting applications
-
-## Troubleshooting
-
-### Kyverno policies not working
-
-Check policy status:
-
-```bash
-kubectl get clusterpolicy
-kubectl describe clusterpolicy <policy-name>
-```
-
-### StaticValidation not updating
-
-Check validation status:
-
-```bash
-kubectl get staticvalidation -n <namespace> -o yaml
-```
-
-Look at `.status.error` field for issues.
-
-### DynamicValidation checks failing
-
-Get detailed status:
-
-```bash
-kubectl get dynamicvalidation <name> -n <namespace> -o yaml
-```
-
-Check `.status.resources[].checkResults[]` for individual check results.
-
-### Operator logs
-
-```bash
-kubectl logs -n kubeasy-system -l app=challenge-operator
-```
-
-## Next steps
-
-- See [Operator API Reference](/docs/developer/operator-api) for complete API documentation
-- Learn about [Testing Challenges](/docs/developer/testing-challenges) to verify validation works
-- Review existing challenges for real-world validation examples
+## How Validation Works
+
+1. **User starts challenge** → CLI deploys manifests via ArgoCD
+2. **User works on the fix** → Modifies resources with kubectl
+3. **User submits** → CLI loads validations from `challenge.yaml`
+4. **CLI executes validations** → Runs each check against the cluster
+5. **Results sent to backend** → Backend verifies all objectives present
+6. **XP awarded** → If all validations pass
+
+## Next Steps
+
+- See [Challenge Structure](/docs/developer/challenge-structure) for the complete challenge format
+- Learn [Creating Your First Challenge](/docs/developer/creating-challenge) step by step
+- Review [Testing Challenges](/docs/developer/testing-challenges) for verification

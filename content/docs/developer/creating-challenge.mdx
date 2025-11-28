@@ -3,535 +3,362 @@ title: Creating Your First Challenge
 description: Step-by-step guide to building a Kubeasy challenge from scratch.
 ---
 
-This guide walks you through creating a simple but complete Kubeasy challenge. By the end, you'll have a working challenge ready to test locally.
+This guide walks you through creating a complete Kubeasy challenge. By the end, you'll have a working challenge ready for submission.
 
-## Before you start
+## Before You Start
 
 Make sure you have:
 
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) installed
-- [Kind](https://kind.sigs.k8s.io/) or another local Kubernetes cluster
-- Basic familiarity with Kubernetes manifests
-- Git and GitHub account
+- [Kind](https://kind.sigs.k8s.io/) for local Kubernetes
+- [Kubeasy CLI](https://github.com/kubeasy-dev/kubeasy-cli) installed
+- Basic familiarity with Kubernetes
 
-## Step 1: Clone the challenges repository
+## Step 1: Design Your Challenge
 
-```bash
-git clone https://github.com/kubeasy-dev/challenges.git
-cd challenges
-```
-
-Browse existing challenges to get familiar with the structure:
-
-```bash
-ls -la
-```
-
-## Step 2: Design your challenge
-
-Before writing any code, answer these questions:
+Before writing any YAML, answer these questions:
 
 1. **What Kubernetes concept does this teach?**
-   - Example: RBAC, resource limits, network policies
+   - Example: Resource limits, RBAC, probes
 
 2. **What's the broken scenario?**
-   - Example: Pod fails due to missing RBAC permissions
+   - Example: Pod gets OOMKilled due to low memory limit
 
-3. **How do learners know it's fixed?**
-   - Example: Pod runs successfully and can access resources
+3. **How do we verify it's fixed?**
+   - Example: Pod runs without crash events
 
 4. **Is this realistic?**
    - Does this problem occur in production?
 
-### Example challenge idea
+### Example Design
 
-Let's create a challenge about RBAC permissions:
+Let's create a challenge about resource limits:
 
-- **Concept**: ServiceAccount RBAC
-- **Problem**: Pod can't access ConfigMaps due to missing permissions
-- **Success**: Pod runs and logs show successful ConfigMap access
-- **Realistic**: Yes - common in production
+- **Concept**: Kubernetes resource management
+- **Problem**: Pod keeps crashing due to insufficient memory
+- **Success**: Pod runs stably without OOM events
+- **Realistic**: Yes - very common in production
 
-## Step 3: Create the directory structure
+## Step 2: Create the Directory Structure
 
 ```bash
-mkdir rbac-configmap-access
-cd rbac-configmap-access
-mkdir -p manifests validation/{kyverno,static,dynamic}
+# Clone the challenges repo
+git clone https://github.com/kubeasy-dev/challenges.git
+cd challenges
+
+# Create your challenge folder
+mkdir -p memory-pressure/manifests
+mkdir -p memory-pressure/policies
 ```
 
-You should now have:
+You should have:
 
 ```
-rbac-configmap-access/
+memory-pressure/
 ├── manifests/
-└── validation/
-    ├── kyverno/
-    ├── static/
-    └── dynamic/
+└── policies/
 ```
 
-## Step 4: Write the broken manifests
+## Step 3: Write challenge.yaml
 
-Create `manifests/namespace.yaml`:
+Create `memory-pressure/challenge.yaml`:
 
 ```yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: rbac-configmap-access
+title: Memory Pressure
+description: |
+  A data processing application keeps crashing.
+  The ops team says it worked fine in development.
+theme: resources-scaling
+difficulty: easy
+estimated_time: 15
+initial_situation: |
+  A data processing pod is deployed.
+  It starts but crashes within seconds.
+  The pod enters CrashLoopBackOff state.
+objective: |
+  Make the application run stably.
+  Understand why Kubernetes keeps killing the pod.
+
+validations:
+  - key: pod-ready
+    title: "Pod Running"
+    description: "The pod must be in Ready state"
+    order: 1
+    type: status
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      conditions:
+        - type: Ready
+          status: "True"
+
+  - key: no-oom
+    title: "Stable Operation"
+    description: "No crash or eviction events"
+    order: 2
+    type: event
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      forbiddenReasons:
+        - "OOMKilled"
+        - "Evicted"
+      sinceSeconds: 300
+
+  - key: low-restarts
+    title: "Low Restart Count"
+    description: "Pod must not restart excessively"
+    order: 3
+    type: metrics
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      metricChecks:
+        - metric: restartCount
+          operator: LessThan
+          value: 3
 ```
 
-Create `manifests/configmap.yaml`:
+**Key points:**
+- Description mentions symptoms, not the cause
+- Objective states the goal, not the solution
+- Validation titles are generic (don't reveal the fix)
 
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: app-config
-  namespace: rbac-configmap-access
-data:
-  database_url: "postgres://db:5432/myapp"
-```
+## Step 4: Create the Broken Manifests
 
-Create `manifests/serviceaccount.yaml`:
-
-```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: app-sa
-  namespace: rbac-configmap-access
-# BUG: No Role or RoleBinding defined!
-# The pod using this SA won't be able to read ConfigMaps
-```
-
-Create `manifests/deployment.yaml`:
+Create `memory-pressure/manifests/deployment.yaml`:
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: app
-  namespace: rbac-configmap-access
+  name: data-processor
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: myapp
+      app: data-processor
   template:
     metadata:
       labels:
-        app: myapp
+        app: data-processor
     spec:
-      serviceAccountName: app-sa
       containers:
-      - name: app
-        image: busybox:1.36
+      - name: processor
+        image: python:3.11-slim
         command:
-        - sh
+        - python
         - -c
         - |
-          echo "Attempting to read ConfigMap..."
-          # This will fail with permission denied
-          wget -O- --header="Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
-            https://kubernetes.default.svc/api/v1/namespaces/rbac-configmap-access/configmaps/app-config
-          sleep 3600
+          import time
+          # Allocate memory to simulate real app
+          data = []
+          for i in range(50):
+              data.append("x" * 1024 * 1024)  # ~50MB
+              time.sleep(0.1)
+          print("Processing complete!")
+          while True:
+              time.sleep(60)
+        resources:
+          limits:
+            memory: "32Mi"  # BUG: Too low for this workload!
+            cpu: "100m"
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
 ```
 
-**Key points**:
-- The bug is clear: missing RBAC resources
-- Realistic scenario: app needs to read config
-- Uses standard images
+This deployment will crash because:
+- The app needs ~50MB of memory
+- The limit is only 32Mi
+- Kubernetes kills the container when it exceeds the limit
 
-## Step 5: Define validation rules
+## Step 5: Add Bypass Protection
 
-### Kyverno policy (optional)
-
-If you want to prevent certain bad practices:
-
-Create `validation/kyverno/deny-privileged.yaml`:
+Create `memory-pressure/policies/protect.yaml`:
 
 ```yaml
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: deny-privileged-rbac-configmap
+  name: protect-memory-pressure
 spec:
   validationFailureAction: Enforce
-  background: false
   rules:
-    - name: deny-privileged-containers
+    - name: preserve-image
       match:
         resources:
-          kinds:
-            - Pod
-          namespaces:
-            - rbac-configmap-access
+          kinds: ["Deployment"]
+          names: ["data-processor"]
+          namespaces: ["challenge-*"]
       validate:
-        message: "Privileged containers are not allowed"
+        message: "Cannot change the container image"
         pattern:
           spec:
-            containers:
-              - =(securityContext):
-                  =(privileged): false
+            template:
+              spec:
+                containers:
+                  - name: processor
+                    image: "python:3.11-slim"
 ```
 
-### Static validation
+This prevents users from replacing the application with a simpler one that uses less memory.
 
-Create `validation/static/validation.yaml`:
+## Step 6: Test Locally
 
-```yaml
-apiVersion: challenge.kubeasy.dev/v1alpha1
-kind: StaticValidation
-metadata:
-  name: rbac-structure
-  namespace: rbac-configmap-access
-spec:
-  target:
-    apiVersion: rbac.authorization.k8s.io/v1
-    kind: Role
-    name: configmap-reader
-  rulesConfigMap:
-    name: rbac-rules
+### Start the environment
+
+```bash
+# Initialize Kubeasy (creates Kind cluster + installs components)
+kubeasy init
+
+# Login to Kubeasy
+kubeasy login
 ```
 
-Create `validation/static/rules-configmap.yaml`:
+### Deploy your challenge
 
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: rbac-rules
-  namespace: rbac-configmap-access
-data:
-  role.rego: |
-    package kubeasy.challenge
-
-    violation[{"msg": msg}] {
-      not input.rules
-      msg := "Role must define rules"
-    }
-
-    violation[{"msg": msg}] {
-      count(input.rules) == 0
-      msg := "Role must have at least one rule"
-    }
-
-    violation[{"msg": msg}] {
-      rule := input.rules[_]
-      not rule.verbs
-      msg := "All rules must define verbs"
-    }
-
-    violation[{"msg": msg}] {
-      rule := input.rules[_]
-      not rule.resources
-      msg := "All rules must define resources"
-    }
+```bash
+kubeasy challenge start memory-pressure
 ```
 
-### Dynamic validation
+### Verify the problem exists
 
-Create `validation/dynamic/validation.yaml`:
+```bash
+# Check pod status
+kubectl get pods -n challenge-memory-pressure
 
-```yaml
-apiVersion: challenge.kubeasy.dev/v1alpha1
-kind: DynamicValidation
-metadata:
-  name: rbac-runtime
-  namespace: rbac-configmap-access
-spec:
-  target:
-    apiVersion: v1
-    kind: Pod
-    labelSelector:
-      matchLabels:
-        app: myapp
-  checks:
-    # Check pod is running
-    - kind: status
-      statusCheck:
-        condition: "Ready"
-        expectedStatus: "True"
+# You should see CrashLoopBackOff
+NAME                              READY   STATUS             RESTARTS   AGE
+data-processor-xxx                0/1     CrashLoopBackOff   3          2m
 
-    # Verify ServiceAccount has permissions
-    - kind: rbac
-      rbacCheck:
-        serviceAccountName: app-sa
-        resourceAttributes:
-          - verb: get
-            resource: configmaps
-          - verb: list
-            resource: configmaps
-
-    # Check logs show successful access
-    - kind: logs
-      logCheck:
-        expectedString: "database_url"
-        sinceSeconds: 300
+# Check events
+kubectl describe pod -n challenge-memory-pressure -l app=data-processor
+# Look for OOMKilled
 ```
 
-## Step 6: Create metadata
+### Apply the fix
 
-Create `metadata.yaml`:
-
-```yaml
-id: rbac-configmap-access
-title: "RBAC: ConfigMap Access"
-description: |
-  A pod needs to read a ConfigMap but the ServiceAccount lacks permissions.
-  Create the necessary RBAC resources to grant access.
-
-difficulty: beginner
-estimatedTime: 15
-themes:
-  - rbac
-  - security
-  - troubleshooting
-
-objectives:
-  - "Understand ServiceAccount permissions"
-  - "Create Role and RoleBinding resources"
-  - "Debug RBAC permission errors"
-
-hints:
-  - "Check pod logs to see the permission error"
-  - "Create a Role that grants 'get' and 'list' on configmaps"
-  - "Bind the Role to the ServiceAccount using a RoleBinding"
+```bash
+kubectl patch deployment data-processor -n challenge-memory-pressure \
+  --type='json' -p='[
+    {"op": "replace", "path": "/spec/template/spec/containers/0/resources/limits/memory", "value": "128Mi"},
+    {"op": "replace", "path": "/spec/template/spec/containers/0/resources/requests/memory", "value": "64Mi"}
+  ]'
 ```
 
-## Step 7: Add learning context (optional)
+### Verify the fix works
 
-Create `README.md`:
+```bash
+# Wait for pod to stabilize
+sleep 30
+
+# Check pod is running
+kubectl get pods -n challenge-memory-pressure
+# Should show Running, not CrashLoopBackOff
+```
+
+### Submit and verify validations
+
+```bash
+kubeasy challenge submit memory-pressure
+```
+
+All validations should pass.
+
+### Clean up
+
+```bash
+kubeasy challenge reset memory-pressure
+```
+
+## Step 7: Submit Your Challenge
+
+Once testing is complete:
+
+```bash
+git checkout -b challenge/memory-pressure
+git add memory-pressure/
+git commit -m "feat: add memory-pressure challenge"
+git push origin challenge/memory-pressure
+```
+
+Open a Pull Request on GitHub with:
 
 ```markdown
-# RBAC: ConfigMap Access
-
-## Context
-
-Applications often need to read configuration from ConfigMaps. By default, ServiceAccounts have no permissions to access any resources.
-
-You must explicitly grant permissions using RBAC (Role-Based Access Control).
-
-## The Problem
-
-A pod is trying to read a ConfigMap but gets "Forbidden" errors because the ServiceAccount `app-sa` has no permissions.
-
-## Learning Objectives
-
-- Understand how ServiceAccounts work
-- Create Roles to define permissions
-- Use RoleBindings to grant permissions
-
-## Tips
-
-1. Check the pod logs to see the error:
-   ```bash
-   kubectl logs -l app=myapp -n rbac-configmap-access
-   ```
-
-2. You need to create:
-   - A **Role** that allows reading ConfigMaps
-   - A **RoleBinding** that connects the Role to the ServiceAccount
-
-3. Example Role structure:
-   ```yaml
-   apiVersion: rbac.authorization.k8s.io/v1
-   kind: Role
-   metadata:
-     name: configmap-reader
-     namespace: rbac-configmap-access
-   rules:
-     - apiGroups: [""]
-       resources: ["configmaps"]
-       verbs: ["get", "list"]
-   ```
-
-## References
-
-- [Kubernetes RBAC Documentation](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
-- [Using RBAC Authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
-```
-
-## Step 8: Test locally
-
-Now test your challenge to ensure it works:
-
-### 1. Setup the environment
-
-**Option A: Using Kubeasy CLI (recommended)**
-
-```bash
-# Install Kubeasy CLI if not already installed
-npm install -g @kubeasy-dev/kubeasy-cli
-
-# Setup creates cluster and installs all components
-kubeasy setup
-```
-
-This installs Kyverno, Challenge Operator, ArgoCD, and configures everything.
-
-**Option B: Manual setup**
-
-```bash
-# Create cluster
-kind create cluster --name kubeasy-test
-
-# Install Kyverno
-kubectl create -f https://github.com/kyverno/kyverno/releases/download/v1.11.0/install.yaml
-kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=kyverno -n kyverno --timeout=300s
-
-# Install Challenge Operator
-kubectl apply -f https://raw.githubusercontent.com/kubeasy-dev/challenge-operator/main/deploy/operator.yaml
-```
-
-### 2. Apply the challenge
-
-```bash
-kubectl apply -f manifests/
-kubectl apply -f validation/
-```
-
-### 3. Verify the problem
-
-Check that the pod shows permission errors:
-
-```bash
-kubectl get pods -n rbac-configmap-access
-kubectl logs -l app=myapp -n rbac-configmap-access
-```
-
-You should see "Forbidden" errors.
-
-### 4. Check validation status
-
-```bash
-kubectl get staticvalidation -n rbac-configmap-access
-kubectl get dynamicvalidation -n rbac-configmap-access
-```
-
-Both should show failures.
-
-### 5. Fix the challenge
-
-Create the RBAC resources:
-
-```bash
-cat <<EOF | kubectl apply -f -
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: configmap-reader
-  namespace: rbac-configmap-access
-rules:
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: app-configmap-reader
-  namespace: rbac-configmap-access
-subjects:
-  - kind: ServiceAccount
-    name: app-sa
-roleRef:
-  kind: Role
-  name: configmap-reader
-  apiGroup: rbac.authorization.k8s.io
-EOF
-```
-
-### 6. Verify it's fixed
-
-Wait a moment, then check:
-
-```bash
-kubectl logs -l app=myapp -n rbac-configmap-access
-```
-
-Logs should now show the ConfigMap data.
-
-Check validation:
-
-```bash
-kubectl get dynamicvalidation rbac-runtime -n rbac-configmap-access -o yaml
-```
-
-All checks should pass (`status: Pass`).
-
-## Step 7: Submit a pull request
-
-Once your challenge works locally:
-
-```bash
-git checkout -b challenge/rbac-configmap-access
-git add .
-git commit -m "Add challenge: RBAC ConfigMap Access"
-git push origin challenge/rbac-configmap-access
-```
-
-Open a PR on GitHub with:
-
-```markdown
-## Challenge: RBAC ConfigMap Access
+## Challenge: Memory Pressure
 
 ### What does this challenge teach?
-This challenge teaches learners how to use RBAC to grant ServiceAccounts permissions to read ConfigMaps.
+Understanding Kubernetes resource limits and how to debug OOMKilled pods.
 
 ### Difficulty and estimated time
-- Difficulty: Beginner
+- Difficulty: Easy
 - Estimated time: 15 minutes
 
 ### Testing
-- [x] Created test cluster
-- [x] Applied manifests and verified the problem exists
-- [x] Created RBAC resources and verified validation passes
-- [x] Checked all validation types work correctly
-
-### Additional notes
-Simple beginner-friendly RBAC challenge with clear error messages and validation.
+- [x] Challenge deploys with broken state
+- [x] OOMKilled events occur as expected
+- [x] Fix (increase memory limit) resolves the issue
+- [x] All validations pass after fix
+- [x] Kyverno policy prevents image changes
 ```
 
-## Best practices checklist
+## Common Mistakes
 
-Before submitting, ensure:
+### 1. Revealing the solution
 
-- [ ] Challenge ID matches directory name
-- [ ] Namespace matches challenge ID
-- [ ] All validations work (Kyverno, Static, Dynamic)
-- [ ] Metadata includes clear objectives and hints
-- [ ] README provides learning context
-- [ ] **NO solution directory included**
-- [ ] Challenge has been tested on fresh cluster
-- [ ] Manifests are minimal and focused
+**Bad:**
+```yaml
+description: |
+  The memory limit is too low. Increase it to fix the crash.
+```
 
-## Common pitfalls
+**Good:**
+```yaml
+description: |
+  The application keeps crashing. It worked fine in development.
+```
 
-### Problem: Challenge is too complex
+### 2. Validation titles that spoil the fix
 
-**Fix**: Focus on one concept. Don't combine RBAC + networking + storage.
+**Bad:**
+```yaml
+- key: memory-check
+  title: "Memory Limit Set to 128Mi"
+```
 
-### Problem: Validation doesn't work
+**Good:**
+```yaml
+- key: stable-operation
+  title: "Stable Operation"
+```
 
-**Fix**: Check operator logs and validation status carefully.
+### 3. Missing bypass protection
 
-### Problem: Error messages are unclear
+Users can replace your broken app with one that works. Always add Kyverno policies to prevent this.
 
-**Fix**: Write validation messages that guide learners.
+### 4. Too complex
 
-### Problem: Including a solution/
+Don't combine multiple unrelated issues. One concept per challenge.
 
-**Fix**: **NEVER include solutions**. Learners must figure it out themselves!
+## Checklist Before Submitting
 
-## Next steps
+- [ ] `challenge.yaml` has all required fields
+- [ ] Description doesn't reveal the root cause
+- [ ] Validation titles don't reveal the solution
+- [ ] Manifests create a reproducible broken state
+- [ ] Kyverno policies prevent obvious bypasses
+- [ ] Challenge tested locally end-to-end
+- [ ] All validations pass after applying the fix
 
-Now that you've created your first challenge:
+## Next Steps
 
-- Read about [Validation Rules](/docs/developer/validation-rules) for advanced techniques
-- See [Testing Challenges](/docs/developer/testing-challenges) for comprehensive testing
-- Review [Contributing Guidelines](/docs/developer/contributing) for submission requirements
-
-Happy challenge building! 🚀
+- Read [Validation Rules](/docs/developer/validation-rules) for more validation types
+- See [Challenge Structure](/docs/developer/challenge-structure) for complete reference
+- Review existing challenges for inspiration
