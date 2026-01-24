@@ -1,6 +1,6 @@
 ---
 title: Testing Challenges
-description: Comprehensive guide to testing challenges locally before submission.
+description: How to test challenges locally before submission.
 ---
 
 Thorough testing ensures your challenge works correctly and provides a good learning experience. This guide covers strategies for testing challenges at every stage.
@@ -12,58 +12,41 @@ Follow this workflow when testing a challenge:
 1. **Setup** - Create a clean test environment
 2. **Deploy** - Apply the broken manifests
 3. **Verify problem** - Confirm the issue is reproducible
-4. **Apply fix** - Create the solution
-5. **Verify validations pass** - Check all validation types
+4. **Apply fix** - Solve the challenge
+5. **Verify validations pass** - Submit and check results
 6. **Clean up** - Reset for next test
 
 ## Setting up a test environment
 
-### Option 1: Using Kubeasy CLI (recommended)
+### Using Kubeasy CLI (recommended)
 
 The easiest way is to use the Kubeasy CLI which sets up everything automatically:
 
 ```bash
-# Install Kubeasy CLI if not already installed
-npm install -g @kubeasy-dev/kubeasy-cli
-
 # Setup creates the cluster and installs all components
 kubeasy setup
 ```
 
 This command will:
 - Create a Kind cluster named `kubeasy`
-- Install Kyverno for policy enforcement
-- Install the Challenge Operator for validation
 - Install ArgoCD for challenge deployment
-- Configure all necessary components
+- Install Kyverno for policy enforcement
+- Configure kubectl context
 
 **Benefits**:
-- ✅ One command setup
-- ✅ All components properly configured
-- ✅ Same environment as production
+- One command setup
+- All components properly configured
+- Same environment as production
 
-### Option 2: Manual setup
+### Manual setup (alternative)
 
 If you prefer to set up components manually:
 
-#### Create the cluster
-
 ```bash
-# Using Kind
+# Create a Kind cluster
 kind create cluster --name kubeasy-test
 
-# Or Minikube
-minikube start -p kubeasy-test
-
-# Or K3d
-k3d cluster create kubeasy-test
-```
-
-#### Install dependencies
-
-**1. Install Kyverno**:
-
-```bash
+# Install Kyverno
 kubectl create -f https://github.com/kyverno/kyverno/releases/download/v1.11.0/install.yaml
 
 # Wait for Kyverno to be ready
@@ -73,302 +56,129 @@ kubectl wait --for=condition=ready pod \
   --timeout=300s
 ```
 
-**2. Install Challenge Operator**:
-
-```bash
-kubectl apply -f https://raw.githubusercontent.com/kubeasy-dev/challenge-operator/main/deploy/operator.yaml
-
-# Wait for operator to be ready
-kubectl wait --for=condition=ready pod \
-  -l app=challenge-operator \
-  -n kubeasy-system \
-  --timeout=300s
-```
-
 ## Testing the broken state
 
-### 1. Apply manifests
+### 1. Start the challenge
 
 ```bash
-cd <challenge-directory>
-kubectl apply -f manifests/
+kubeasy challenge start <challenge-slug>
+```
+
+Or if testing locally before the challenge is registered:
+
+```bash
+# Create namespace manually
+kubectl create namespace challenge-<slug>
+
+# Apply manifests
+kubectl apply -f manifests/ -n challenge-<slug>
+
+# Apply policies
+kubectl apply -f policies/
 ```
 
 ### 2. Verify resources are created
 
 ```bash
 # Check namespace
-kubectl get ns <challenge-namespace>
+kubectl get ns challenge-<slug>
 
 # Check resources in the namespace
-kubectl get all -n <challenge-namespace>
+kubectl get all -n challenge-<slug>
 ```
 
 ### 3. Confirm the problem exists
 
 Depending on the challenge type:
 
-**For RBAC issues**:
-
+**For pod failures:**
 ```bash
-kubectl logs <pod-name> -n <challenge-namespace>
+kubectl get pods -n challenge-<slug>
+kubectl describe pod <pod-name> -n challenge-<slug>
+kubectl logs <pod-name> -n challenge-<slug>
+```
+
+Expected: Pod should show errors (CrashLoopBackOff, OOMKilled, etc.)
+
+**For RBAC issues:**
+```bash
+kubectl logs <pod-name> -n challenge-<slug>
 ```
 
 Expected: Logs should show permission denied errors.
 
-**For pod failures**:
-
+**For networking issues:**
 ```bash
-kubectl get pods -n <challenge-namespace>
-kubectl describe pod <pod-name> -n <challenge-namespace>
+kubectl exec -it <pod-name> -n challenge-<slug> -- curl http://service:port
 ```
 
-Expected: Pod should show errors in events or status.
-
-**For policy violations**:
-
-```bash
-kubectl get events -n <challenge-namespace>
-```
-
-Expected: Events should mention policy violations.
-
-## Testing validation
-
-### Kyverno policies
-
-Apply Kyverno policies:
-
-```bash
-kubectl apply -f validation/kyverno/
-```
-
-Check policy status:
-
-```bash
-kubectl get clusterpolicy
-kubectl describe clusterpolicy <policy-name>
-```
-
-**Test enforcement**:
-
-Try applying an invalid resource (if your policy blocks something):
-
-```bash
-# Should be blocked
-kubectl run test --image=nginx --privileged -n <challenge-namespace>
-```
-
-Expected output:
-```
-Error from server: admission webhook "validate.kyverno.svc" denied the request:
-resource Pod/test was blocked due to the following policies
-
-deny-privileged:
-  deny-privileged-containers: 'validation error: Privileged containers are not allowed'
-```
-
-### StaticValidation
-
-Apply static validation:
-
-```bash
-kubectl apply -f validation/static/
-```
-
-Check validation status:
-
-```bash
-kubectl get staticvalidation -n <challenge-namespace>
-```
-
-View detailed status:
-
-```bash
-kubectl get staticvalidation <name> -n <challenge-namespace> -o yaml
-```
-
-Look for:
-
-```yaml
-status:
-  allPassed: false
-  resources:
-    - target:
-        kind: Role
-        name: configmap-reader
-      ruleResults:
-        - rule: role.rego
-          status: Fail
-          message: "Role must define rules"
-```
-
-### DynamicValidation
-
-Apply dynamic validation:
-
-```bash
-kubectl apply -f validation/dynamic/
-```
-
-Check validation status:
-
-```bash
-kubectl get dynamicvalidation -n <challenge-namespace>
-```
-
-View detailed status:
-
-```bash
-kubectl get dynamicvalidation <name> -n <challenge-namespace> -o yaml
-```
-
-Expected (broken state):
-
-```yaml
-status:
-  allPassed: false
-  resources:
-    - target:
-        kind: Pod
-        name: app-xyz
-      checkResults:
-        - kind: status
-          status: Fail
-          message: "Condition \"Ready\" has status \"False\""
-        - kind: rbac
-          status: Fail
-          message: "ServiceAccount app-sa is not allowed to get configmaps"
-```
+Expected: Connection should fail.
 
 ## Testing the solution
 
 ### 1. Apply the fix
 
-Manually create the resources that solve the challenge:
+Manually apply the changes that solve the challenge:
 
 ```bash
-# Example: Create RBAC resources
-kubectl apply -f - <<EOF
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: configmap-reader
-  namespace: <challenge-namespace>
-rules:
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: app-reader
-  namespace: <challenge-namespace>
-subjects:
-  - kind: ServiceAccount
-    name: app-sa
-roleRef:
-  kind: Role
-  name: configmap-reader
-  apiGroup: rbac.authorization.k8s.io
-EOF
+# Example: Increase memory limit
+kubectl patch deployment data-processor -n challenge-<slug> \
+  --type='json' -p='[
+    {"op": "replace", "path": "/spec/template/spec/containers/0/resources/limits/memory", "value": "256Mi"}
+  ]'
 ```
 
-### 2. Verify resources are healthy
+### 2. Wait for resources to stabilize
 
 ```bash
-kubectl get pods -n <challenge-namespace>
-kubectl describe pod <pod-name> -n <challenge-namespace>
+# Wait for pod to be ready
+kubectl wait --for=condition=ready pod \
+  -l app=<app-label> \
+  -n challenge-<slug> \
+  --timeout=120s
 ```
 
-Expected: Pods should be `Running` and `Ready`.
-
-### 3. Check validation passes
-
-Wait a moment (operator reconciles every 30s), then check:
-
-**StaticValidation**:
+### 3. Submit and verify validations
 
 ```bash
-kubectl get staticvalidation <name> -n <challenge-namespace> -o yaml
+kubeasy challenge submit <challenge-slug>
 ```
 
-Expected status:
+All validations should pass. If any fail, the CLI will show which ones and why.
 
-```yaml
-status:
-  allPassed: true
-  resources:
-    - target:
-        kind: Role
-        name: configmap-reader
-      ruleResults:
-        - rule: role.rego
-          status: Pass
-          message: ""
-```
+### 4. Manual validation checks
 
-**DynamicValidation**:
+You can also manually verify each validation type:
 
+**For condition validations:**
 ```bash
-kubectl get dynamicvalidation <name> -n <challenge-namespace> -o yaml
+kubectl get pod <pod-name> -n challenge-<slug> -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+# Expected: True
 ```
 
-Expected status:
-
-```yaml
-status:
-  allPassed: true
-  resources:
-    - target:
-        kind: Pod
-        name: app-xyz
-      checkResults:
-        - kind: status
-          status: Pass
-          message: 'Condition "Ready" has status "True"'
-        - kind: rbac
-          status: Pass
-          message: "All RBAC permissions verified"
-        - kind: logs
-          status: Pass
-          message: 'Found expected string "database_url" in logs'
-```
-
-## Common testing scenarios
-
-### Testing log checks
-
-Verify logs contain expected content:
-
+**For status validations:**
 ```bash
-kubectl logs <pod-name> -n <challenge-namespace>
+kubectl get pod <pod-name> -n challenge-<slug> -o jsonpath='{.status.containerStatuses[0].restartCount}'
+# Expected: Less than threshold
 ```
 
-Ensure the `expectedString` from your `logCheck` appears.
-
-### Testing status checks
-
-Check pod conditions:
-
+**For log validations:**
 ```bash
-kubectl get pod <pod-name> -n <challenge-namespace> -o jsonpath='{.status.conditions}'
+kubectl logs <pod-name> -n challenge-<slug> | grep "expected string"
+# Expected: String should be found
 ```
 
-Verify the condition you're checking exists and has the expected status.
-
-### Testing RBAC checks
-
-Manually verify ServiceAccount permissions:
-
+**For event validations:**
 ```bash
-kubectl auth can-i get configmaps \
-  --as=system:serviceaccount:<namespace>:<sa-name> \
-  -n <namespace>
+kubectl get events -n challenge-<slug> --field-selector reason=OOMKilled
+# Expected: No events (empty output)
 ```
 
-Expected output: `yes`
+**For connectivity validations:**
+```bash
+kubectl exec -it <source-pod> -n challenge-<slug> -- curl http://service:port/path
+# Expected: HTTP 200
+```
 
 ## Automated testing script
 
@@ -380,225 +190,201 @@ Create a test script for consistent testing:
 
 set -e
 
-CHALLENGE_NS="rbac-configmap-access"
+SLUG="memory-pressure"
+NS="challenge-$SLUG"
 
-echo "🧹 Cleaning up any previous test..."
-kubectl delete namespace $CHALLENGE_NS --ignore-not-found=true
-kubectl delete clusterpolicy --selector challenge=$CHALLENGE_NS --ignore-not-found=true
+echo "Cleaning up any previous test..."
+kubeasy challenge clean $SLUG 2>/dev/null || true
 
-echo "📦 Applying broken manifests..."
-kubectl apply -f manifests/
+echo "Starting challenge..."
+kubeasy challenge start $SLUG
 
-echo "✅ Applying validation..."
-kubectl apply -f validation/
-
-echo "⏳ Waiting for resources..."
+echo "Waiting for resources..."
 sleep 10
 
-echo "🔍 Checking broken state..."
-kubectl get pods -n $CHALLENGE_NS
+echo "Checking broken state..."
+kubectl get pods -n $NS
+# Should show CrashLoopBackOff or similar
 
-echo "📋 Checking validation status..."
-kubectl get staticvalidation -n $CHALLENGE_NS
-kubectl get dynamicvalidation -n $CHALLENGE_NS
+echo "Applying fix..."
+kubectl patch deployment data-processor -n $NS \
+  --type='json' -p='[
+    {"op": "replace", "path": "/spec/template/spec/containers/0/resources/limits/memory", "value": "256Mi"},
+    {"op": "replace", "path": "/spec/template/spec/containers/0/resources/requests/memory", "value": "128Mi"}
+  ]'
 
-echo "🔧 Applying fix..."
-kubectl apply -f - <<EOF
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: configmap-reader
-  namespace: $CHALLENGE_NS
-rules:
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: app-reader
-  namespace: $CHALLENGE_NS
-subjects:
-  - kind: ServiceAccount
-    name: app-sa
-roleRef:
-  kind: Role
-  name: configmap-reader
-  apiGroup: rbac.authorization.k8s.io
-EOF
+echo "Waiting for pod to stabilize..."
+sleep 30
 
-echo "⏳ Waiting for validation to update (30s)..."
-sleep 35
+echo "Submitting solution..."
+kubeasy challenge submit $SLUG
 
-echo "🔍 Checking validation status..."
-STATIC_PASSED=$(kubectl get staticvalidation -n $CHALLENGE_NS -o jsonpath='{.items[0].status.allPassed}')
-DYNAMIC_PASSED=$(kubectl get dynamicvalidation -n $CHALLENGE_NS -o jsonpath='{.items[0].status.allPassed}')
-
-echo "Static validation passed: $STATIC_PASSED"
-echo "Dynamic validation passed: $DYNAMIC_PASSED"
-
-if [ "$STATIC_PASSED" == "true" ] && [ "$DYNAMIC_PASSED" == "true" ]; then
-  echo "✅ All tests passed!"
-  exit 0
-else
-  echo "❌ Some validations failed"
-  kubectl get staticvalidation -n $CHALLENGE_NS -o yaml
-  kubectl get dynamicvalidation -n $CHALLENGE_NS -o yaml
-  exit 1
-fi
+echo "Test complete!"
 ```
 
 Make it executable:
-
 ```bash
 chmod +x test-challenge.sh
 ./test-challenge.sh
 ```
 
-## Testing edge cases
+## Testing Kyverno policies
 
-### Multiple resources
-
-If your target matches multiple resources, ensure all pass validation:
+Verify your bypass prevention policies work:
 
 ```bash
-# Deploy multiple pods
-kubectl scale deployment app --replicas=3 -n <challenge-namespace>
+# Apply policies
+kubectl apply -f policies/
 
-# Wait for them to be ready
-kubectl wait --for=condition=ready pod -l app=myapp -n <challenge-namespace>
-
-# Check validation covers all pods
-kubectl get dynamicvalidation <name> -n <challenge-namespace> -o yaml
+# Try an action that should be blocked
+kubectl patch deployment data-processor -n challenge-<slug> \
+  --type='json' -p='[
+    {"op": "replace", "path": "/spec/template/spec/containers/0/image", "value": "nginx:latest"}
+  ]'
 ```
 
-Status should show results for all matching pods.
+Expected output:
+```
+Error from server: admission webhook "validate.kyverno.svc" denied the request:
+resource Deployment/data-processor was blocked due to the following policies
+
+protect-challenge-image:
+  preserve-image: 'Cannot change the application image'
+```
+
+**View active policies:**
+```bash
+kubectl get clusterpolicy
+kubectl describe clusterpolicy <policy-name>
+```
+
+## Testing edge cases
+
+### Multiple pods
+
+If your challenge uses multiple pods, ensure all pass validation:
+
+```bash
+# Scale up
+kubectl scale deployment app --replicas=3 -n challenge-<slug>
+
+# Wait for all pods
+kubectl wait --for=condition=ready pod -l app=myapp -n challenge-<slug> --timeout=120s
+
+# Submit - should validate all pods
+kubeasy challenge submit <slug>
+```
 
 ### Timing issues
 
-Test that validation handles resources that aren't ready yet:
+Test that validations handle resources that aren't ready yet:
 
 ```bash
-# Apply manifests
-kubectl apply -f manifests/
+# Start challenge
+kubeasy challenge start <slug>
 
-# Immediately check validation
-kubectl get dynamicvalidation <name> -n <challenge-namespace>
+# Immediately submit (should fail)
+kubeasy challenge submit <slug>
 
-# Wait and check again (after 30s reconciliation)
-sleep 35
-kubectl get dynamicvalidation <name> -n <challenge-namespace>
+# Apply fix
+# ...
+
+# Wait and submit again
+sleep 30
+kubeasy challenge submit <slug>
 ```
 
-Validation should eventually pass when resources are ready.
+## Reset and clean up
+
+### Reset challenge (keep progress)
+
+```bash
+kubeasy challenge reset <slug>
+```
+
+This resets the cluster state while keeping your submission history.
+
+### Clean up completely
+
+```bash
+kubeasy challenge clean <slug>
+```
+
+This removes all cluster resources for the challenge.
+
+### Start fresh
+
+If you need a completely fresh environment:
+
+```bash
+# Delete the Kind cluster
+kind delete cluster --name kubeasy
+
+# Recreate everything
+kubeasy setup
+```
 
 ## Debugging validation issues
 
-### Validation never completes
+### Validation fails but fix seems correct
 
-**Check operator logs**:
+1. **Check resource status directly:**
+   ```bash
+   kubectl get pod <pod-name> -n challenge-<slug> -o yaml
+   ```
 
-```bash
-kubectl logs -n kubeasy-system -l app=challenge-operator --tail=100
-```
+2. **Verify labels match:**
+   ```bash
+   kubectl get pods -l app=<expected-label> -n challenge-<slug>
+   ```
 
-Look for errors related to your validation.
+3. **Check recent events:**
+   ```bash
+   kubectl get events -n challenge-<slug> --sort-by='.lastTimestamp' | tail -20
+   ```
 
-**Check validation resource**:
+4. **Check logs for the expected string:**
+   ```bash
+   kubectl logs <pod-name> -n challenge-<slug> --since=5m
+   ```
 
-```bash
-kubectl describe staticvalidation <name> -n <namespace>
-kubectl describe dynamicvalidation <name> -n <namespace>
-```
+### Connectivity validation fails
 
-### StaticValidation fails unexpectedly
+1. **Verify service exists:**
+   ```bash
+   kubectl get svc -n challenge-<slug>
+   ```
 
-**Test Rego rules locally**:
+2. **Check endpoints:**
+   ```bash
+   kubectl get endpoints <service-name> -n challenge-<slug>
+   ```
 
-```bash
-# Save your Rego rule to a file
-cat > test.rego <<EOF
-package kubeasy.challenge
+3. **Test from source pod:**
+   ```bash
+   kubectl exec -it <source-pod> -n challenge-<slug> -- curl -v http://service:port/path
+   ```
 
-violation[{"msg": msg}] {
-  not input.rules
-  msg := "Role must define rules"
-}
-EOF
-
-# Save a test resource
-cat > resource.json <<EOF
-{
-  "apiVersion": "rbac.authorization.k8s.io/v1",
-  "kind": "Role",
-  "metadata": {"name": "test"},
-  "rules": []
-}
-EOF
-
-# Test with OPA
-opa eval -d test.rego -i resource.json 'data.kubeasy.challenge.violation'
-```
-
-### DynamicValidation checks fail when they should pass
-
-**Check individual checks**:
-
-**For `logs` checks**:
-```bash
-kubectl logs <pod-name> -n <namespace> | grep "<expectedString>"
-```
-
-**For `status` checks**:
-```bash
-kubectl get pod <pod-name> -n <namespace> -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
-```
-
-**For `rbac` checks**:
-```bash
-kubectl auth can-i <verb> <resource> \
-  --as=system:serviceaccount:<namespace>:<sa-name> \
-  -n <namespace>
-```
+4. **Check NetworkPolicies:**
+   ```bash
+   kubectl get networkpolicies -n challenge-<slug>
+   ```
 
 ## Testing checklist
 
-Before submitting, ensure:
+Before submitting your challenge:
 
+- [ ] Challenge deploys with broken state
+- [ ] Problem is clearly visible (errors in logs, events, or pod status)
+- [ ] Kyverno policies block bypasses
+- [ ] Fix resolves the issue
+- [ ] All validations pass after fix
+- [ ] Validation messages are helpful
+- [ ] Estimated time is accurate
 - [ ] Challenge works on a fresh cluster
-- [ ] Problem is reproducible
-- [ ] Kyverno policies work (if used)
-- [ ] StaticValidation rules pass when fixed
-- [ ] DynamicValidation checks pass when fixed
-- [ ] All validation types provide clear feedback
-- [ ] Challenge can be completed in estimated time
-- [ ] Documentation is accurate
-- [ ] Clean up removes all resources
-
-## Performance testing
-
-For challenges involving multiple resources:
-
-### Measure completion time
-
-```bash
-time ./test-challenge.sh
-```
-
-Ensure estimated time is accurate.
-
-### Check resource usage
-
-```bash
-kubectl top nodes
-kubectl top pods -n <namespace>
-```
-
-Ensure the challenge doesn't consume excessive resources.
 
 ## Next steps
 
 - Review [Contributing Guidelines](/docs/developer/contributing) for submission requirements
-- See [Operator API Reference](/docs/developer/operator-api) for validation spec details
+- See [Validation Reference](/docs/developer/validation-reference) for validation spec details
 - Check existing challenges for testing examples

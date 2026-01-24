@@ -1,0 +1,609 @@
+---
+title: Validation Reference
+description: Complete technical reference for CLI-based validation types and specifications.
+---
+
+This page provides the complete reference for Kubeasy's CLI-based validation system. Validations are defined in `challenge.yaml` and executed by the CLI against the Kubernetes cluster.
+
+## Overview
+
+The CLI supports five validation types:
+
+| Type | Purpose | Use Case |
+|------|---------|----------|
+| `status` | Check resource status fields with operators | replicas == 3, restartCount < 5, phase == Running |
+| `condition` | Validate Kubernetes conditions | Pod Ready, Deployment Available |
+| `log` | Find strings in container logs | "Connected to database", "Server started" |
+| `event` | Detect forbidden Kubernetes events | No OOMKilled, no CrashLoopBackOff |
+| `connectivity` | HTTP connectivity tests | Service responds with 200 |
+
+## Common Fields
+
+All validations share these fields:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `key` | Yes | Unique identifier for this validation |
+| `title` | Yes | Short title shown in the UI |
+| `description` | Yes | What this validation checks |
+| `order` | No | Display order (lower = first) |
+| `type` | Yes | One of: status, condition, log, event, connectivity |
+| `spec` | Yes | Type-specific configuration |
+
+## Target Specification
+
+All validation types use a `target` to specify which resources to validate:
+
+```yaml
+spec:
+  target:
+    kind: Pod                    # Required: Resource kind
+    name: my-pod                 # Optional: Specific resource name
+    labelSelector:               # Optional: Match by labels
+      app: my-app
+```
+
+**Resolution priority:**
+1. If `name` is set, validates that specific resource
+2. If `labelSelector` is set, validates all matching resources
+3. Must specify at least one of `name` or `labelSelector`
+
+## Status Validation
+
+Checks resource status fields using comparison operators.
+
+### Specification
+
+```yaml
+type: status
+spec:
+  target:
+    kind: <Resource Kind>
+    labelSelector: { ... }
+  checks:
+    - field: "<field path>"
+      operator: "<operator>"
+      value: <expected value>
+```
+
+### Operators
+
+| Operator | Description |
+|----------|-------------|
+| `==` or `=` | Equal to |
+| `!=` | Not equal to |
+| `>` | Greater than |
+| `<` | Less than |
+| `>=` | Greater than or equal |
+| `<=` | Less than or equal |
+
+### Field Path Syntax
+
+Field paths navigate the resource's `.status` object:
+
+| Pattern | Example | Description |
+|---------|---------|-------------|
+| Simple field | `phase` | Direct field access: `.status.phase` |
+| Nested field | `containerStatuses[0].ready` | Array index: first container's ready status |
+| Array filter | `conditions[type=Ready].status` | Filter by field value |
+
+### Examples
+
+**Check Deployment has enough replicas:**
+```yaml
+- key: replicas-ready
+  title: "All Replicas Ready"
+  description: "Deployment must have all replicas available"
+  type: status
+  spec:
+    target:
+      kind: Deployment
+      name: my-deployment
+    checks:
+      - field: "readyReplicas"
+        operator: ">="
+        value: 3
+```
+
+**Check Pod restart count:**
+```yaml
+- key: low-restarts
+  title: "Stable Operation"
+  description: "Pod must not restart excessively"
+  type: status
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
+    checks:
+      - field: "containerStatuses[0].restartCount"
+        operator: "<"
+        value: 3
+```
+
+**Check Pod phase:**
+```yaml
+- key: pod-running
+  title: "Pod Running"
+  description: "Pod must be in Running phase"
+  type: status
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
+    checks:
+      - field: "phase"
+        operator: "=="
+        value: "Running"
+```
+
+## Condition Validation
+
+Validates Kubernetes conditions on resources. This is a convenient shorthand for checking `.status.conditions[]`.
+
+### Specification
+
+```yaml
+type: condition
+spec:
+  target:
+    kind: <Resource Kind>
+    labelSelector: { ... }
+  checks:
+    - type: "<condition type>"
+      status: "<expected status>"
+```
+
+### Common Conditions
+
+| Resource | Condition Type | Description |
+|----------|---------------|-------------|
+| Pod | `Ready` | All containers are ready |
+| Pod | `ContainersReady` | All containers have passed readiness |
+| Pod | `PodScheduled` | Pod has been scheduled |
+| Deployment | `Available` | Minimum replicas are available |
+| Deployment | `Progressing` | Deployment is making progress |
+| Job | `Complete` | Job has completed successfully |
+| Job | `Failed` | Job has failed |
+
+### Examples
+
+**Check Pod is Ready:**
+```yaml
+- key: pod-ready
+  title: "Pod Ready"
+  description: "The application pod must be running and healthy"
+  type: condition
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
+    checks:
+      - type: Ready
+        status: "True"
+```
+
+**Check Deployment is Available:**
+```yaml
+- key: deployment-available
+  title: "Deployment Available"
+  description: "All replicas must be available"
+  type: condition
+  spec:
+    target:
+      kind: Deployment
+      name: my-deployment
+    checks:
+      - type: Available
+        status: "True"
+```
+
+**Check Job completed:**
+```yaml
+- key: job-complete
+  title: "Job Completed"
+  description: "The batch job must complete successfully"
+  type: condition
+  spec:
+    target:
+      kind: Job
+      name: data-migration
+    checks:
+      - type: Complete
+        status: "True"
+```
+
+## Log Validation
+
+Searches for expected strings in container logs.
+
+### Specification
+
+```yaml
+type: log
+spec:
+  target:
+    kind: Pod
+    labelSelector: { ... }
+  container: "<container name>"     # Optional: defaults to first container
+  expectedStrings:
+    - "string to find"
+    - "another string"
+  sinceSeconds: 300                 # Optional: only check recent logs
+```
+
+### Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `container` | No | Container name (defaults to first container) |
+| `expectedStrings` | Yes | List of strings that must appear in logs |
+| `sinceSeconds` | No | Only check logs from the last N seconds |
+
+### Examples
+
+**Check application started:**
+```yaml
+- key: app-started
+  title: "Application Started"
+  description: "Application must show startup message"
+  type: log
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: api-service
+    expectedStrings:
+      - "Server started successfully"
+    sinceSeconds: 300
+```
+
+**Check database connection in specific container:**
+```yaml
+- key: db-connected
+  title: "Database Connected"
+  description: "Application must connect to database"
+  type: log
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: backend
+    container: app
+    expectedStrings:
+      - "Connected to database"
+      - "Database pool initialized"
+    sinceSeconds: 120
+```
+
+## Event Validation
+
+Detects forbidden Kubernetes events. Useful for checking stability (no crashes, no evictions).
+
+### Specification
+
+```yaml
+type: event
+spec:
+  target:
+    kind: Pod
+    labelSelector: { ... }
+  forbiddenReasons:
+    - "OOMKilled"
+    - "CrashLoopBackOff"
+  sinceSeconds: 300                 # Optional: only check recent events
+```
+
+### Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `forbiddenReasons` | Yes | Event reasons that should NOT appear |
+| `sinceSeconds` | No | Only check events from the last N seconds |
+
+### Common Forbidden Reasons
+
+| Reason | Description |
+|--------|-------------|
+| `OOMKilled` | Container killed due to out of memory |
+| `Evicted` | Pod evicted from node |
+| `CrashLoopBackOff` | Container keeps crashing |
+| `FailedScheduling` | Pod cannot be scheduled |
+| `BackOff` | Back-off restarting failed container |
+| `FailedMount` | Volume mount failed |
+
+### Examples
+
+**Check no crash events:**
+```yaml
+- key: no-crashes
+  title: "No Crash Events"
+  description: "Pod should run stably without crashes"
+  type: event
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: data-processor
+    forbiddenReasons:
+      - "OOMKilled"
+      - "CrashLoopBackOff"
+      - "Evicted"
+    sinceSeconds: 300
+```
+
+**Check no scheduling issues:**
+```yaml
+- key: pod-scheduled
+  title: "Pod Scheduled"
+  description: "Pod must be scheduled successfully"
+  type: event
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
+    forbiddenReasons:
+      - "FailedScheduling"
+    sinceSeconds: 600
+```
+
+## Connectivity Validation
+
+Tests HTTP connectivity from a source pod to target endpoints.
+
+### Specification
+
+```yaml
+type: connectivity
+spec:
+  sourcePod:
+    labelSelector: { ... }
+  targets:
+    - url: "http://service:port/path"
+      expectedStatusCode: 200
+      headers:                       # Optional
+        Host: "api.example.com"
+      timeoutSeconds: 5              # Optional
+```
+
+### Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `sourcePod.labelSelector` | Yes | Pod to make requests from |
+| `targets` | Yes | List of endpoints to test |
+| `targets[].url` | Yes | URL to request |
+| `targets[].expectedStatusCode` | Yes | Expected HTTP status code |
+| `targets[].headers` | No | HTTP headers to send |
+| `targets[].timeoutSeconds` | No | Request timeout (default: 5) |
+
+### Examples
+
+**Check service is reachable:**
+```yaml
+- key: service-reachable
+  title: "Service Accessible"
+  description: "Backend service must be reachable"
+  type: connectivity
+  spec:
+    sourcePod:
+      labelSelector:
+        app: client
+    targets:
+      - url: "http://backend-service:8080/health"
+        expectedStatusCode: 200
+        timeoutSeconds: 5
+```
+
+**Check ingress routing with Host header:**
+```yaml
+- key: ingress-routing
+  title: "Ingress Routing"
+  description: "Traffic must route through ingress"
+  type: connectivity
+  spec:
+    sourcePod:
+      labelSelector:
+        app: curl-client
+    targets:
+      - url: "http://ingress-nginx-controller.ingress-nginx.svc.cluster.local"
+        headers:
+          Host: "api.local"
+        expectedStatusCode: 200
+        timeoutSeconds: 10
+```
+
+**Check multiple endpoints:**
+```yaml
+- key: all-services-up
+  title: "All Services Running"
+  description: "All microservices must be accessible"
+  type: connectivity
+  spec:
+    sourcePod:
+      labelSelector:
+        app: test-client
+    targets:
+      - url: "http://frontend:3000/"
+        expectedStatusCode: 200
+      - url: "http://backend:8080/api/health"
+        expectedStatusCode: 200
+      - url: "http://cache:6379/ping"
+        expectedStatusCode: 200
+```
+
+## Complete Example
+
+Here's a complete `challenge.yaml` with multiple validation types:
+
+```yaml
+title: Pod Stability
+description: |
+  A data processing application keeps crashing.
+  It worked fine yesterday but now Kubernetes keeps killing it.
+theme: resources-scaling
+difficulty: easy
+estimated_time: 15
+initial_situation: |
+  A data processing pod is deployed.
+  The pod starts but crashes within seconds.
+objective: |
+  Make the application run stably.
+
+validations:
+  - key: pod-ready
+    title: "Pod Ready"
+    description: "The pod must be running and healthy"
+    order: 1
+    type: condition
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      checks:
+        - type: Ready
+          status: "True"
+
+  - key: no-crashes
+    title: "No Crash Events"
+    description: "No OOM or eviction events"
+    order: 2
+    type: event
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      forbiddenReasons:
+        - "OOMKilled"
+        - "Evicted"
+        - "CrashLoopBackOff"
+      sinceSeconds: 300
+
+  - key: low-restarts
+    title: "Stable Operation"
+    description: "Pod must not restart excessively"
+    order: 3
+    type: status
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      checks:
+        - field: "containerStatuses[0].restartCount"
+          operator: "<"
+          value: 3
+
+  - key: app-running
+    title: "Application Running"
+    description: "Application logs show it's processing"
+    order: 4
+    type: log
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      expectedStrings:
+        - "Processing started"
+      sinceSeconds: 120
+```
+
+## Best Practices
+
+### Validate Outcomes, Not Implementations
+
+Check that the problem is fixed, not how it was fixed:
+
+```yaml
+# Bad - reveals the solution
+- key: memory-increased
+  title: "Memory Limit Set to 256Mi"
+
+# Good - checks the outcome
+- key: stable-operation
+  title: "Stable Operation"
+```
+
+### Use Generic Titles
+
+Don't spoil the solution in validation titles:
+
+```yaml
+# Bad
+title: "Liveness Probe Configured"
+
+# Good
+title: "Health Checks Pass"
+```
+
+### Set Appropriate Timeouts
+
+Use `sinceSeconds` to avoid checking old events/logs:
+
+```yaml
+# Check only recent events (last 5 minutes)
+sinceSeconds: 300
+```
+
+### Accept Multiple Solutions
+
+Design validations that pass regardless of how the user fixed the issue:
+
+```yaml
+# Good - any fix that makes the pod stable will pass
+- type: condition
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
+    checks:
+      - type: Ready
+        status: "True"
+```
+
+## Troubleshooting
+
+### Validation never passes
+
+1. **Check target selector**: Ensure labels match the actual resources
+   ```bash
+   kubectl get pods -l app=my-app
+   ```
+
+2. **Verify resource status**: Check the actual status fields
+   ```bash
+   kubectl get pod <name> -o yaml | grep -A 20 status:
+   ```
+
+3. **Test connectivity manually**: For connectivity validations
+   ```bash
+   kubectl exec -it <source-pod> -- curl http://service:port/path
+   ```
+
+### Field path doesn't work
+
+Use `kubectl` to explore the status structure:
+```bash
+kubectl get pod <name> -o jsonpath='{.status.containerStatuses[0].restartCount}'
+```
+
+### Events not found
+
+Check events exist and aren't too old:
+```bash
+kubectl get events --sort-by='.lastTimestamp' | grep <pod-name>
+```
+
+## Related Resources
+
+- [Validation Rules Guide](/docs/developer/validation-rules) - Practical examples
+- [Challenge Structure](/docs/developer/challenge-structure) - Complete challenge format
+- [Testing Challenges](/docs/developer/testing-challenges) - How to test validations

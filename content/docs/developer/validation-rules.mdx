@@ -29,10 +29,10 @@ This allows multiple valid solutions and doesn't spoil the learning experience.
 
 | Type | Purpose | Example Use Case |
 |------|---------|------------------|
-| `status` | Check resource conditions | Pod Ready, Deployment Available |
+| `condition` | Check Kubernetes conditions | Pod Ready, Deployment Available |
+| `status` | Check resource status fields with operators | replicas >= 3, restartCount < 5 |
 | `log` | Find strings in container logs | "Connected to database", "Server started" |
-| `event` | Detect forbidden K8s events | No OOMKilled, no Evicted |
-| `metrics` | Check pod/deployment metrics | Restart count < 3, replicas >= 2 |
+| `event` | Detect forbidden K8s events | No OOMKilled, no CrashLoopBackOff |
 | `connectivity` | HTTP connectivity tests | Service responds with 200 |
 
 ## Defining Validations
@@ -50,7 +50,7 @@ validations:
     title: "User-Friendly Title"
     description: "What this checks (not how to fix it)"
     order: 1
-    type: status
+    type: condition
     spec:
       # Type-specific configuration
 ```
@@ -63,27 +63,27 @@ validations:
 | `title` | Yes | Short title shown in the UI |
 | `description` | Yes | What this validation checks |
 | `order` | No | Display order (lower = first) |
-| `type` | Yes | One of: status, log, event, metrics, connectivity |
+| `type` | Yes | One of: condition, status, log, event, connectivity |
 | `spec` | Yes | Type-specific configuration |
 
 ## Validation Examples
 
-### Status Validation
+### Condition Validation
 
-Check if a resource has specific conditions (Ready, Available, etc.)
+Check if a resource has specific conditions (Ready, Available, etc.). This is the most common validation type.
 
 ```yaml
 - key: pod-ready-check
   title: "Pod Ready"
   description: "The application pod must be running and healthy"
   order: 1
-  type: status
+  type: condition
   spec:
     target:
       kind: Pod
       labelSelector:
         app: my-app
-    conditions:
+    checks:
       - type: Ready
         status: "True"
 ```
@@ -95,14 +95,53 @@ Check if a resource has specific conditions (Ready, Available, etc.)
   title: "Deployment Available"
   description: "All replicas must be available"
   order: 1
+  type: condition
+  spec:
+    target:
+      kind: Deployment
+      name: my-deployment
+    checks:
+      - type: Available
+        status: "True"
+```
+
+### Status Validation
+
+Check resource status fields using comparison operators. Useful for numeric values.
+
+```yaml
+- key: low-restarts
+  title: "Stable Operation"
+  description: "Pod must not restart excessively"
+  order: 2
+  type: status
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
+    checks:
+      - field: "containerStatuses[0].restartCount"
+        operator: "<"
+        value: 3
+```
+
+**Available operators:** `==`, `!=`, `>`, `<`, `>=`, `<=`
+
+**Check replicas:**
+```yaml
+- key: replicas-ready
+  title: "All Replicas Ready"
+  description: "Deployment must have all replicas"
   type: status
   spec:
     target:
       kind: Deployment
       name: my-deployment
-    conditions:
-      - type: Available
-        status: "True"
+    checks:
+      - field: "readyReplicas"
+        operator: ">="
+        value: 3
 ```
 
 ### Log Validation
@@ -137,7 +176,7 @@ Find expected strings in container logs.
       kind: Pod
       labelSelector:
         app: my-app
-    containerName: sidecar
+    container: sidecar
     expectedStrings:
       - "Sidecar initialized"
     sinceSeconds: 60
@@ -161,33 +200,10 @@ Detect forbidden Kubernetes events (useful for checking stability).
     forbiddenReasons:
       - "OOMKilled"
       - "Evicted"
-      - "BackOff"
+      - "CrashLoopBackOff"
       - "FailedScheduling"
     sinceSeconds: 300
 ```
-
-### Metrics Validation
-
-Check pod or deployment metrics like restart count.
-
-```yaml
-- key: low-restarts
-  title: "Low Restart Count"
-  description: "Pod must be stable without excessive restarts"
-  order: 4
-  type: metrics
-  spec:
-    target:
-      kind: Pod
-      labelSelector:
-        app: my-app
-    metricChecks:
-      - metric: restartCount
-        operator: LessThan
-        value: 3
-```
-
-**Available operators:** `LessThan`, `GreaterThan`, `Equals`
 
 ### Connectivity Validation
 
@@ -197,7 +213,7 @@ Test HTTP connectivity between pods.
 - key: service-reachable
   title: "Service Connectivity"
   description: "The backend must be reachable"
-  order: 6
+  order: 4
   type: connectivity
   spec:
     sourcePod:
@@ -300,13 +316,13 @@ validations:
     title: "Pod Ready"
     description: "The data-processor pod must be running and healthy"
     order: 1
-    type: status
+    type: condition
     spec:
       target:
         kind: Pod
         labelSelector:
           app: data-processor
-      conditions:
+      checks:
         - type: Ready
           status: "True"
 
@@ -329,15 +345,15 @@ validations:
     title: "Stable Operation"
     description: "The pod must not restart excessively"
     order: 3
-    type: metrics
+    type: status
     spec:
       target:
         kind: Pod
         labelSelector:
           app: data-processor
-      metricChecks:
-        - metric: restartCount
-          operator: LessThan
+      checks:
+        - field: "containerStatuses[0].restartCount"
+          operator: "<"
           value: 3
 ```
 
@@ -382,21 +398,26 @@ validations:
   title: "Application Authenticated"
   type: log
   spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
     expectedStrings:
       - "Authentication successful"
 ```
 
 ## How Validation Works
 
-1. **User starts challenge** → CLI deploys manifests via ArgoCD
-2. **User works on the fix** → Modifies resources with kubectl
-3. **User submits** → CLI loads validations from `challenge.yaml`
-4. **CLI executes validations** → Runs each check against the cluster
-5. **Results sent to backend** → Backend verifies all objectives present
-6. **XP awarded** → If all validations pass
+1. **User starts challenge** - CLI deploys manifests via ArgoCD
+2. **User works on the fix** - Modifies resources with kubectl
+3. **User submits** - CLI loads validations from `challenge.yaml`
+4. **CLI executes validations** - Runs each check against the cluster
+5. **Results sent to backend** - Backend verifies all objectives present
+6. **XP awarded** - If all validations pass
 
 ## Next Steps
 
 - See [Challenge Structure](/docs/developer/challenge-structure) for the complete challenge format
 - Learn [Creating Your First Challenge](/docs/developer/creating-challenge) step by step
 - Review [Testing Challenges](/docs/developer/testing-challenges) for verification
+- Check [Validation Reference](/docs/developer/validation-reference) for complete spec details

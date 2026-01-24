@@ -1,0 +1,232 @@
+---
+title: Website Features
+description: Explore the Kubeasy web platform features - dashboard, progress tracking, and account management.
+---
+
+The Kubeasy web platform at [kubeasy.dev](https://kubeasy.dev) provides a comprehensive interface to browse challenges, track your progress, and manage your account.
+
+## Dashboard
+
+After logging in, your dashboard shows your learning progress at a glance.
+
+### Stats Overview
+
+The dashboard displays three key metrics:
+
+- **Total XP** - Experience points earned from completed challenges
+- **Rank** - Your current level based on total XP
+- **Streak** - Consecutive days with at least one completed challenge
+
+### Skills Radar
+
+A radar chart visualizes your completion percentage by theme:
+- Resources & Scaling
+- Networking
+- RBAC & Security
+- Volumes & Secrets
+- Monitoring & Debugging
+
+This helps identify areas where you might want to focus your learning.
+
+### Recent Activity
+
+See your latest completed challenges with timestamps and XP earned.
+
+## Challenges Page
+
+Browse all available challenges at `/challenges`.
+
+### Filtering
+
+Filter challenges by:
+
+- **Difficulty** - Easy, Medium, Hard
+- **Theme** - RBAC, Networking, Resources, etc.
+- **Type** - Troubleshooting, Configuration, etc.
+- **Status** - Hide completed challenges (when logged in)
+
+### Search
+
+Search challenges by title to quickly find specific topics.
+
+### Challenge Cards
+
+Each card shows:
+- Title and short description
+- Difficulty badge
+- Estimated completion time
+- Number of users who completed it
+- Your status (not started, in progress, completed)
+- **Challenge of the Week** ribbon (for featured challenges)
+- **Starter Friendly** badge (for beginner-friendly challenges)
+
+## Challenge Detail Page
+
+View complete challenge information at `/challenges/<slug>`.
+
+### Challenge Information
+
+- **Description** - What the challenge is about
+- **Initial Situation** - The broken state you'll encounter
+- **Objective** - What you need to achieve
+- **Difficulty** and **Estimated Time**
+
+### Validation Objectives
+
+See the list of objectives that must pass to complete the challenge. Each objective shows:
+- Title
+- Description
+- Status (pending, passed, failed)
+
+After submitting, the status updates in real-time.
+
+### CLI Commands
+
+Quick-copy commands to start working:
+
+```bash
+kubeasy challenge start <slug>
+kubeasy challenge submit <slug>
+kubeasy challenge clean <slug>
+```
+
+### Submission History
+
+View all your submission attempts with timestamps and results. Click "View History" to see:
+- When you submitted
+- Which objectives passed or failed
+- Any error messages
+
+## Progress Tracking
+
+### XP System
+
+Earn XP by completing challenges:
+
+- **Base XP** - Varies by difficulty (Easy: 50, Medium: 100, Hard: 200)
+- **First Challenge Bonus** - +50 XP for your first completed challenge
+- **Streak Bonus** - +10 XP per consecutive day
+
+### Rank Progression
+
+Your rank increases as you earn XP:
+
+| Rank | XP Required |
+|------|-------------|
+| Novice | 0 |
+| Beginner | 300 |
+| Advanced | 1,200 |
+| Expert | 3,500 |
+| Master | 7,000 |
+| Legend | 12,000 |
+
+### Daily Streak
+
+Complete at least one challenge per day to maintain your streak. The streak counter shows on your dashboard and earns you bonus XP.
+
+## Profile Page
+
+Manage your account at `/profile`.
+
+### Account Information
+
+Update your:
+- First name
+- Last name
+
+### API Tokens
+
+Create and manage API tokens for CLI authentication:
+
+1. Click "Create Token"
+2. Give it a name (e.g., "My Laptop")
+3. Optionally set an expiration date
+4. Copy the token immediately (it won't be shown again)
+
+**Token Management:**
+- **Revoke** - Disables a token but keeps the record
+- **Delete** - Permanently removes the token
+
+### Email Preferences
+
+Control which emails you receive:
+- Challenge updates
+- New feature announcements
+- Weekly progress summaries
+
+Toggle categories on/off as needed.
+
+### Danger Zone
+
+**Reset Progress** - Permanently delete all your progress, XP, and submission history. This cannot be undone.
+
+## Authentication
+
+### Sign In
+
+Kubeasy supports OAuth authentication:
+- Sign in with GitHub
+- Sign in with Google
+
+No password to remember - just use your existing account.
+
+### CLI Authentication
+
+To use the CLI, you need an API token:
+
+1. Go to your [Profile](/profile)
+2. Create a new API token
+3. Run `kubeasy login` and paste your token
+
+The token is stored securely using your system keyring, or in `~/.config/kubeasy-cli/credentials` on headless systems.
+
+## Get Started Page
+
+New users can follow the guided setup at `/get-started`:
+
+1. **Prerequisites** - Docker, kubectl
+2. **Install CLI** - Download and install the Kubeasy CLI
+3. **Setup** - Run `kubeasy setup` to create your local cluster
+4. **First Challenge** - Start with a beginner-friendly challenge
+
+### Troubleshooting
+
+Common issues and solutions are listed on the Get Started page:
+- Docker not running
+- Port conflicts
+- Installation problems
+
+## Themes Page
+
+Browse challenges organized by theme at `/themes`:
+
+- **RBAC & Security** - Permissions, service accounts, security contexts
+- **Networking** - Services, ingress, network policies
+- **Resources & Scaling** - Limits, requests, HPA, scaling
+- **Volumes & Secrets** - Storage, ConfigMaps, Secrets
+- **Monitoring & Debugging** - Probes, logging, events
+
+Each theme page shows all challenges in that category with your completion status.
+
+## Real-Time Updates
+
+The platform uses real-time subscriptions to update validation status instantly after you submit:
+
+1. Submit via CLI: `kubeasy challenge submit <slug>`
+2. Validation results appear immediately on the web
+3. No page refresh needed
+
+## Mobile Support
+
+The website is responsive and works on mobile devices for:
+- Browsing challenges
+- Viewing your progress
+- Managing your account
+
+For the actual challenge work, you'll need a computer with Docker and kubectl.
+
+## Next Steps
+
+- [Getting Started](/docs/user/getting-started) - Set up your environment
+- [CLI Reference](/docs/user/cli-reference) - Learn all CLI commands
+- [How It Works](/docs/user/how-it-works) - Understand the architecture

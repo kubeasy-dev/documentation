@@ -14,7 +14,7 @@ Download the latest release for your platform from [GitHub Releases](https://git
 kubeasy version
 ```
 
-## 🔐 Authentication
+## Authentication
 
 ### `kubeasy login`
 
@@ -42,7 +42,7 @@ Enter your Kubeasy API token: ************************************
 kubeasy login --token "kb_1234567890abcdef"
 ```
 
-## ⚙️ Setup
+## Setup
 
 ### `kubeasy setup`
 
@@ -61,27 +61,24 @@ kubeasy setup
 **Example output:**
 ```
 $ kubeasy setup
-🔍 Checking Docker availability...
-✓ Docker is running
+Checking Docker availability...
+Docker is running
 
-🔍 Checking for existing Kind cluster...
-⚙️  Creating Kind cluster 'kubeasy'...
-✓ Cluster created successfully
+Checking for existing Kind cluster...
+Creating Kind cluster 'kubeasy'...
+Cluster created successfully
 
-📦 Installing ArgoCD...
-✓ ArgoCD installed in namespace 'argocd'
+Installing ArgoCD...
+ArgoCD installed in namespace 'argocd'
 
-📦 Installing Kyverno...
-✓ Kyverno installed in namespace 'kyverno'
+Installing Kyverno...
+Kyverno installed in namespace 'kyverno'
 
-📦 Installing Challenge Operator...
-✓ Operator installed in namespace 'kubeasy-system'
+Configuring kubectl context...
+Context set to 'kind-kubeasy'
 
-⚙️  Configuring kubectl context...
-✓ Context set to 'kind-kubeasy'
-
-✅ Setup complete! You're ready to start challenges.
-   Run 'kubeasy challenge start <challenge-name>' to begin.
+Setup complete! You're ready to start challenges.
+Run 'kubeasy challenge start <challenge-name>' to begin.
 ```
 
 **Options:**
@@ -91,7 +88,7 @@ $ kubeasy setup
 **Troubleshooting:**
 If setup fails, check the [Troubleshooting guide](/docs/user/troubleshooting#cluster-setup-issues).
 
-## 🧩 Challenge management
+## Challenge Management
 
 All challenge-related actions are available under the `challenge` subcommand.
 
@@ -111,19 +108,19 @@ kubeasy challenge start <challenge-name>
 **Example:**
 ```
 $ kubeasy challenge start rbac-basics
-📥 Fetching challenge metadata...
-✓ Challenge 'RBAC Basics: Service Account Permissions' loaded
+Fetching challenge metadata...
+Challenge 'RBAC Basics: Service Account Permissions' loaded
 
-🚀 Deploying challenge resources...
-✓ Namespace 'challenge-rbac-basics' created
-✓ ArgoCD Application created
-✓ Waiting for resources to sync... (10s)
-✓ Resources deployed successfully
+Deploying challenge resources...
+Namespace 'challenge-rbac-basics' created
+ArgoCD Application created
+Waiting for resources to sync...
+Resources deployed successfully
 
-⚙️  Switching kubectl context...
-✓ Context set to namespace 'challenge-rbac-basics'
+Switching kubectl context...
+Context set to namespace 'challenge-rbac-basics'
 
-🎯 Challenge started!
+Challenge started!
 
 Objective: Fix the RBAC configuration so the pod can access the API
 
@@ -131,11 +128,11 @@ Estimated time: 15 minutes
 Difficulty: Beginner
 
 Hints:
-  • Check pod logs for permission errors
-  • Review the ServiceAccount used by the deployment
-  • Ensure the Role grants necessary API access
+  - Check pod logs for permission errors
+  - Review the ServiceAccount used by the deployment
+  - Ensure the Role grants necessary API access
 
-Good luck! 🚀
+Good luck!
 ```
 
 **After starting:**
@@ -163,58 +160,41 @@ kubeasy challenge submit <challenge-name>
 **Example (successful submission):**
 ```
 $ kubeasy challenge submit rbac-basics
-🔍 Running validations...
+Running validations...
 
-Static checks (Kyverno):
-  ✓ Resource limits defined
-  ✓ Security context configured
-  ✓ Labels present
+  Pod Ready                  PASSED
+  Service Accessible         PASSED
+  RBAC Permissions           PASSED
 
-Dynamic checks (Operator):
-  ✓ Pod is running (phase: Running)
-  ✓ Service is accessible (HTTP 200)
-  ✓ RBAC permissions granted
+Submitting results...
+Results uploaded successfully
 
-📤 Submitting results...
-✓ Results uploaded successfully
-
-🎉 Challenge completed! (Score: 100%)
+Challenge completed!
 
 View detailed feedback at:
-https://kubeasy.dev/challenges/rbac-basics/submission/abc123
+https://kubeasy.dev/challenges/rbac-basics
 ```
 
 **Example (failed validation):**
 ```
 $ kubeasy challenge submit network-policy-debug
-🔍 Running validations...
+Running validations...
 
-Static checks (Kyverno):
-  ✓ NetworkPolicy exists
+  Pod Running                PASSED
+  Frontend Connectivity      FAILED - Connection timeout after 5s
+  Backend Isolation          FAILED - Connection should be blocked
 
-Dynamic checks (Operator):
-  ✓ Pod is running
-  ✗ Frontend cannot reach backend (connection timeout)
-  ✗ Backend can reach database (should be blocked)
+Submitting results...
+Results uploaded
 
-📤 Submitting results...
-✓ Results uploaded
-
-❌ Challenge not yet complete (Score: 33%)
+Challenge not yet complete
 
 Failed checks:
-  • Frontend → Backend connectivity
-    Expected: Connection successful
-    Got: Connection timeout after 5s
-    Hint: Check NetworkPolicy ingress rules
-
-  • Backend → Database connectivity
-    Expected: Connection blocked
-    Got: Connection successful
-    Hint: Add egress NetworkPolicy to restrict backend
+  - Frontend Connectivity: Connection timeout after 5s
+  - Backend Isolation: Connection should be blocked but succeeded
 
 View full report at:
-https://kubeasy.dev/challenges/network-policy-debug/submission/xyz789
+https://kubeasy.dev/challenges/network-policy-debug
 ```
 
 ### `kubeasy challenge get <challenge>`
@@ -269,15 +249,15 @@ kubeasy challenge reset <challenge-name>
 **Example:**
 ```
 $ kubeasy challenge reset rbac-basics
-⚠️  This will reset the challenge to its initial state.
-   Your current progress will be lost.
+This will reset the challenge to its initial state.
+Your current progress will be lost.
 
-   Continue? (y/N): y
+Continue? (y/N): y
 
-🔄 Resetting challenge...
-✓ Deleted existing resources
-✓ Reapplied initial manifests
-✓ Challenge reset complete
+Resetting challenge...
+Deleted existing resources
+Reapplied initial manifests
+Challenge reset complete
 
 You can now try solving it again from scratch.
 ```
@@ -304,10 +284,10 @@ kubeasy challenge clean <challenge-name>
 **Example:**
 ```
 $ kubeasy challenge clean rbac-basics
-🧹 Cleaning up challenge resources...
-✓ Deleted ArgoCD Application
-✓ Deleted namespace 'challenge-rbac-basics'
-✓ Cleanup complete
+Cleaning up challenge resources...
+Deleted ArgoCD Application
+Deleted namespace 'challenge-rbac-basics'
+Cleanup complete
 
 Your challenge progress on the platform remains intact.
 ```
@@ -317,18 +297,14 @@ Your challenge progress on the platform remains intact.
 - You want to remove a challenge without resetting your submission
 - You're switching to a different challenge
 
-**Clean up all challenges at once:**
+**Clean up multiple challenges:**
 ```bash
-# List all active challenges
-kubeasy challenge list --active
-
-# Clean them all
-for challenge in $(kubeasy challenge list --active --format=names); do
-  kubeasy challenge clean $challenge
-done
+# Clean each challenge individually
+kubeasy challenge clean rbac-basics
+kubeasy challenge clean network-policy
 ```
 
-## 🧠 Shell autocompletion
+## Shell Autocompletion
 
 ### `kubeasy completion`
 

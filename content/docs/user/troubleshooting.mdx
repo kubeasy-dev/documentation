@@ -229,34 +229,30 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 
 **Debugging steps:**
 
-**1. Check validation status**
-```bash
-# Get ChallengeValidation resource
-kubectl get challengevalidation -n challenge-<name>
-
-# View detailed status
-kubectl get challengevalidation <name> -n challenge-<name> -o yaml
-
-# Look at the status.conditions field for specific failures
-```
-
-**2. Check operator logs**
-```bash
-# View operator logs
-kubectl logs -n kubeasy-system -l app=challenge-operator --tail=50
-
-# Follow logs in real-time
-kubectl logs -n kubeasy-system -l app=challenge-operator -f
-```
-
-**3. Verify resources are as expected**
+**1. Check resource status directly**
 ```bash
 # List all resources in the challenge namespace
 kubectl get all -n challenge-<name>
 
-# Check specific resource details
-kubectl describe pod <pod-name> -n challenge-<name>
-kubectl logs <pod-name> -n challenge-<name>
+# Check pod status and conditions
+kubectl get pod <pod-name> -n challenge-<name> -o yaml
+
+# View recent events
+kubectl get events -n challenge-<name> --sort-by='.lastTimestamp'
+```
+
+**2. Verify conditions match expected values**
+```bash
+# Check if pod is Ready
+kubectl get pod <pod-name> -n challenge-<name> -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+
+# Check restart count
+kubectl get pod <pod-name> -n challenge-<name> -o jsonpath='{.status.containerStatuses[0].restartCount}'
+```
+
+**3. Check logs for expected strings**
+```bash
+kubectl logs <pod-name> -n challenge-<name> --since=5m
 ```
 
 **4. Test validation manually**
@@ -516,11 +512,11 @@ If your issue isn't covered here:
    # CLI debug mode
    kubeasy --debug challenge start <name>
 
-   # Operator logs
-   kubectl logs -n kubeasy-system -l app=challenge-operator
-
    # ArgoCD logs
    kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
+
+   # Kyverno logs
+   kubectl logs -n kyverno -l app.kubernetes.io/name=kyverno
    ```
 
 2. **Gather diagnostic info**
@@ -529,7 +525,7 @@ If your issue isn't covered here:
    kubectl cluster-info dump > cluster-dump.txt
 
    # Challenge state
-   kubectl get all,challengevalidations -n challenge-<name> -o yaml > challenge-state.yaml
+   kubectl get all -n challenge-<name> -o yaml > challenge-state.yaml
    ```
 
 3. **Ask for help**
@@ -553,7 +549,6 @@ kubectl top pods -A
 # Verify all Kubeasy components are healthy
 kubectl get pods -n argocd
 kubectl get pods -n kyverno
-kubectl get pods -n kubeasy-system
 
 # Test DNS resolution
 kubectl run -it --rm debug --image=busybox --restart=Never -- nslookup kubernetes.default

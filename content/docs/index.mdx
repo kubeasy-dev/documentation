@@ -35,7 +35,7 @@ Learn how to create and contribute challenges:
 - **[Validation Rules](/docs/developer/validation-rules)** - Define success criteria
 - **[Testing](/docs/developer/testing-challenges)** - Test challenges locally
 - **[Contributing](/docs/developer/contributing)** - Submission guidelines
-- **[Operator API](/docs/developer/operator-api)** - Technical reference
+- **[Validation Reference](/docs/developer/validation-reference)** - Technical reference
 
 **[→ Start with the Developer Guide](/docs/developer)**
 
@@ -53,8 +53,7 @@ Use `kubectl`, Lens, or any tool you prefer. The challenges run on actual Kubern
 
 Challenges validate themselves using:
 - **Kyverno** - Prevents cheating by blocking invalid shortcuts
-- **Static validation** - Checks resource configuration with Rego
-- **Dynamic validation** - Verifies runtime behavior (logs, status, RBAC)
+- **CLI-based validation** - Checks conditions, status fields, logs, events, and connectivity
 
 ### Progressive learning
 
@@ -65,8 +64,8 @@ Challenges range from beginner-friendly RBAC scenarios to advanced multi-compone
 ### For learners
 
 ```bash
-# Install the CLI
-npm install -g @kubeasy-dev/kubeasy-cli
+# Download the CLI from GitHub Releases
+# https://github.com/kubeasy-dev/kubeasy-cli/releases
 
 # Login with your API token
 kubeasy login
@@ -86,14 +85,12 @@ git clone https://github.com/kubeasy-dev/challenges.git
 cd challenges
 
 # Create your challenge
-mkdir my-challenge
-cd my-challenge
-mkdir -p manifests validation/{kyverno,static,dynamic}
+mkdir -p my-challenge/manifests
+mkdir -p my-challenge/policies
 
 # Test it
 kubeasy setup
-kubectl apply -f manifests/
-kubectl apply -f validation/
+kubeasy challenge start my-challenge
 ```
 
 ## Philosophy
@@ -114,4 +111,4 @@ Kubeasy believes the best way to learn Kubernetes is through **practice, not the
 
 ---
 
-Happy learning! 🚀
+Happy learning!

@@ -110,18 +110,18 @@ validations:
       sinceSeconds: 300
 
   - key: low-restarts
-    title: "Low Restart Count"
+    title: "Stable Operation"
     description: "Pod must not restart excessively"
     order: 3
-    type: metrics
+    type: status
     spec:
       target:
         kind: Pod
         labelSelector:
           app: data-processor
-      metricChecks:
-        - metric: restartCount
-          operator: LessThan
+      checks:
+        - field: "containerStatuses[0].restartCount"
+          operator: "<"
           value: 3
 ```
 
@@ -216,7 +216,7 @@ This prevents users from replacing the application with a simpler one that uses 
 
 ```bash
 # Initialize Kubeasy (creates Kind cluster + installs components)
-kubeasy init
+kubeasy setup
 
 # Login to Kubeasy
 kubeasy login

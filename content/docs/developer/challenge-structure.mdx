@@ -53,13 +53,13 @@ validations:
     title: "Pod Ready"
     description: "The pod must be running and healthy"
     order: 1
-    type: status
+    type: condition
     spec:
       target:
         kind: Pod
         labelSelector:
           app: data-processor
-      conditions:
+      checks:
         - type: Ready
           status: "True"
 ```
@@ -194,7 +194,7 @@ validations:
     title: "User-Friendly Title"
     description: "What this checks"
     order: 1
-    type: status|log|event|metrics|rbac|connectivity
+    type: condition|status|log|event|connectivity
     spec:
       # Type-specific configuration
 ```
@@ -203,11 +203,10 @@ validations:
 
 | Type | Purpose |
 |------|---------|
-| `status` | Check resource conditions (Ready, Available) |
+| `condition` | Check Kubernetes conditions (Ready, Available) |
+| `status` | Check resource status fields with operators (restartCount, replicas) |
 | `log` | Find strings in container logs |
-| `event` | Detect forbidden K8s events (OOMKilled, Evicted) |
-| `metrics` | Check pod metrics (restart count) |
-| `rbac` | Test ServiceAccount permissions |
+| `event` | Detect forbidden K8s events (OOMKilled, CrashLoopBackOff) |
 | `connectivity` | HTTP connectivity tests |
 
 See [Validation Rules](/docs/developer/validation-rules) for detailed examples.
@@ -307,13 +306,13 @@ validations:
     title: "Pod Ready"
     description: "The pod must be running"
     order: 1
-    type: status
+    type: condition
     spec:
       target:
         kind: Pod
         labelSelector:
           app: data-processor
-      conditions:
+      checks:
         - type: Ready
           status: "True"
 
@@ -330,6 +329,7 @@ validations:
       forbiddenReasons:
         - "OOMKilled"
         - "Evicted"
+        - "CrashLoopBackOff"
       sinceSeconds: 300
 ```
 

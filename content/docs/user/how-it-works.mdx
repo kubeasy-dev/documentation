@@ -57,7 +57,7 @@ The CLI is built with **Go** and uses the **Cobra** framework for command-line p
 
 **Key Commands:**
 ```bash
-kubeasy init              # Bootstrap the local cluster
+kubeasy setup             # Bootstrap the local cluster
 kubeasy challenge start   # Deploy challenge manifests
 kubeasy challenge submit  # Run validations and submit results
 kubeasy challenge reset   # Clean up and restart
@@ -73,7 +73,7 @@ kubeasy challenge reset   # Clean up and restart
 - No cloud dependencies
 - Realistic Kubernetes environment
 
-When you run `kubeasy init`, the CLI:
+When you run `kubeasy setup`, the CLI:
 1. Checks if a Kind cluster named `kubeasy` exists
 2. Creates it if needed (single control-plane node)
 3. Configures `kubectl` to point to this cluster
@@ -142,30 +142,46 @@ Instead of a Kubernetes operator, Kubeasy uses **CLI-based validation**. The CLI
 
 | Type | What it checks |
 |------|----------------|
-| `status` | Resource conditions (Pod Ready, Deployment Available) |
+| `status` | Resource status fields with operators (replicas, restartCount, phase) |
+| `condition` | Kubernetes conditions (Pod Ready, Deployment Available) |
 | `log` | Strings in container logs |
-| `event` | Forbidden Kubernetes events (OOMKilled, Evicted) |
-| `metrics` | Pod metrics (restart count) |
-| `rbac` | ServiceAccount permissions |
+| `event` | Forbidden Kubernetes events (OOMKilled, CrashLoopBackOff) |
 | `connectivity` | HTTP connectivity between pods |
 
-**Example validation definition:**
+**Example validation definitions:**
 ```yaml
 # In challenge.yaml
 validations:
+  # Check a condition (Ready, Available, etc.)
   - key: pod-ready
     title: "Pod Ready"
     description: "The pod must be running"
     order: 1
+    type: condition
+    spec:
+      target:
+        kind: Pod
+        labelSelector:
+          app: data-processor
+      checks:
+        - type: Ready
+          status: "True"
+
+  # Check a status field with operator
+  - key: low-restarts
+    title: "Stable Operation"
+    description: "Pod must not restart excessively"
+    order: 2
     type: status
     spec:
       target:
         kind: Pod
         labelSelector:
           app: data-processor
-      conditions:
-        - type: Ready
-          status: "True"
+      checks:
+        - field: "containerStatuses[0].restartCount"
+          operator: "<"
+          value: 3
 ```
 
 When you run `kubeasy challenge submit`, the CLI:
@@ -277,7 +293,7 @@ The backend validates submissions by:
 
 ## What Gets Installed During Setup?
 
-When you run `kubeasy init`, the CLI installs:
+When you run `kubeasy setup`, the CLI installs:
 
 | Component | Purpose | Namespace |
 |-----------|---------|-----------|
