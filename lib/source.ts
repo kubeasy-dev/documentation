@@ -1,4 +1,4 @@
-import { docs } from '@/.source';
+import { docs } from '@/.source/server';
 import { type InferPageType, loader } from 'fumadocs-core/source';
 import { icons } from 'lucide-react';
 import { createElement } from 'react';
