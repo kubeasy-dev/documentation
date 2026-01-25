@@ -214,7 +214,19 @@ See [Validation Rules](/docs/developer/validation-rules) for detailed examples.
 
 ### 5. image/ Directory (Optional)
 
-Custom Docker images if the challenge needs a specific application:
+If your challenge needs a custom application, you can create your own Docker image. Simply add an `image/` directory with a `Dockerfile` in your challenge folder:
+
+```
+my-challenge/
+├── challenge.yaml
+├── manifests/
+├── policies/
+└── image/
+    ├── Dockerfile
+    └── app.py          # Your application files
+```
+
+**Example Dockerfile:**
 
 ```dockerfile
 # image/Dockerfile
@@ -223,6 +235,37 @@ FROM python:3.11-slim
 COPY app.py /app/
 CMD ["python", "/app/app.py"]
 ```
+
+#### Automatic Build & Publish
+
+When you merge your challenge to `main`, the CI automatically:
+
+1. Detects challenges with an `image/` directory
+2. Builds the Docker image (multi-arch: `linux/amd64` and `linux/arm64`)
+3. Pushes to GitHub Container Registry: `ghcr.io/kubeasy-dev/<challenge-name>:latest`
+
+**Using your custom image in manifests:**
+
+```yaml
+# manifests/deployment.yaml
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/kubeasy-dev/my-challenge:latest
+```
+
+#### When to Use Custom Images
+
+- Your challenge needs specific application behavior (memory leaks, slow responses, etc.)
+- You need to simulate a realistic application workload
+- Standard images (nginx, python, busybox) don't fit your scenario
+
+#### Best Practices
+
+- Keep images small (use slim/alpine base images)
+- Don't include secrets or sensitive data
+- Make the application behavior predictable and reproducible
+- Add a `.dockerignore` file to exclude unnecessary files
 
 ## Themes
 

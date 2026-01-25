@@ -179,6 +179,12 @@ This deployment will crash because:
 - The limit is only 32Mi
 - Kubernetes kills the container when it exceeds the limit
 
+<Callout type="info" title="Need a Custom Image?">
+If inline commands aren't enough, you can create a custom Docker image. Add an `image/` directory with a `Dockerfile` in your challenge folder - the CI will automatically build and publish it to `ghcr.io/kubeasy-dev/<challenge-name>:latest`.
+
+See [Challenge Structure - Custom Images](/docs/developer/challenge-structure#5-image-directory-optional) for details.
+</Callout>
+
 ## Step 5: Add Bypass Protection
 
 Create `memory-pressure/policies/protect.yaml`:
