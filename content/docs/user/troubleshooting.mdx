@@ -52,8 +52,8 @@ chmod +x kubeasy
 # Remove the quarantine attribute
 xattr -d com.apple.quarantine kubeasy
 
-# Or allow it via System Preferences
-# System Preferences → Security & Privacy → General → "Allow Anyway"
+# Or allow it via System Settings
+# System Settings -> Privacy & Security -> "Allow Anyway"
 ```
 
 ## Cluster setup issues
@@ -88,7 +88,7 @@ lsof -i :6443
 
 # Kill the process or stop existing Kind clusters
 kind delete cluster --name kubeasy
-kind create cluster --name kubeasy
+kubeasy setup
 ```
 
 **2. Insufficient resources**
@@ -97,7 +97,7 @@ kind create cluster --name kubeasy
 docker info | grep -i memory
 
 # Increase Docker Desktop resources:
-# Docker Desktop → Preferences → Resources
+# Docker Desktop -> Preferences -> Resources
 # Set at least: 4 GB RAM, 2 CPUs
 ```
 
@@ -133,35 +133,35 @@ kubeasy setup
 
 ### Login fails with "Invalid token"
 
-**Problem:** `kubeasy login` returns "Authentication failed: invalid token"
+**Problem:** `kubeasy login` returns authentication failure
 
 **Solution:**
-1. Generate a new API token from your [Kubeasy profile](/profile)
-2. Ensure you copied the entire token (no spaces or newlines)
+1. Generate a new API key from your [Kubeasy profile](https://kubeasy.dev/profile)
+2. Ensure you copied the entire key (no spaces or newlines)
 3. Try logging in again:
 ```bash
 kubeasy login
-# Paste your token when prompted
+# Enter your API key when prompted
 ```
 
-### Token expired
+### API key not found
 
-**Problem:** Commands fail with "Authentication token expired"
+**Problem:** Commands fail with "no API key found, please run 'kubeasy login'"
 
 **Solution:**
 ```bash
-# Log out and log back in with a new token
-kubeasy logout
+# Re-authenticate
 kubeasy login
 ```
 
-**Check token location:**
+**Check where credentials are stored:**
 ```bash
-# Token is stored at:
-cat ~/.kubeasy/token
+# System keyring is checked first, then file-based storage at:
+# Linux/macOS: ~/.config/kubeasy-cli/credentials
+# Windows: %APPDATA%/kubeasy-cli/credentials
 
-# Or on Windows:
-type %USERPROFILE%\.kubeasy\token
+# You can also set the environment variable:
+export KUBEASY_API_KEY=your-api-key
 ```
 
 ## Challenge issues
@@ -177,29 +177,23 @@ type %USERPROFILE%\.kubeasy\token
 kubectl get nodes
 kubectl get pods -A
 
-# Ensure ArgoCD is running
-kubectl get pods -n argocd
+# Ensure Kyverno is running
+kubectl get pods -n kyverno
 ```
 
-**2. Check ArgoCD Application**
-```bash
-# List ArgoCD applications
-kubectl get applications -n argocd
-
-# Describe the challenge application
-kubectl describe application challenge-<name> -n argocd
-
-# Check ArgoCD logs
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
-```
-
-**3. Check namespace creation**
+**2. Check namespace creation**
 ```bash
 # Verify namespace exists
-kubectl get namespace challenge-<name>
+kubectl get namespace <challenge-slug>
 
 # Check events
-kubectl get events -n challenge-<name> --sort-by='.lastTimestamp'
+kubectl get events -n <challenge-slug> --sort-by='.lastTimestamp'
+```
+
+**3. Verify authentication**
+```bash
+# Make sure you're logged in
+kubeasy login
 ```
 
 ### Challenge resources not deploying
@@ -208,19 +202,15 @@ kubectl get events -n challenge-<name> --sort-by='.lastTimestamp'
 
 **Solution:**
 ```bash
-# Check ArgoCD sync status
-kubectl get application challenge-<name> -n argocd -o yaml
+# Check all resources in the challenge namespace
+kubectl get all -n <challenge-slug>
 
-# Manually trigger sync
-kubectl patch application challenge-<name> -n argocd \
-  --type merge \
-  -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"syncStrategy":{"hook":{}}}}}'
+# Check events for errors
+kubectl get events -n <challenge-slug> --sort-by='.lastTimestamp'
 
-# Check ArgoCD UI
-kubectl port-forward svc/argocd-server -n argocd 8080:443
-# Open https://localhost:8080
-# Username: admin
-# Password: kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}" | base64 -d
+# Try resetting and restarting the challenge
+kubeasy challenge reset <challenge-slug>
+kubeasy challenge start <challenge-slug>
 ```
 
 ### Validation fails unexpectedly
@@ -229,44 +219,32 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 
 **Debugging steps:**
 
-**1. Check validation status**
+**1. Re-run the submission**
 ```bash
-# Get ChallengeValidation resource
-kubectl get challengevalidation -n challenge-<name>
-
-# View detailed status
-kubectl get challengevalidation <name> -n challenge-<name> -o yaml
-
-# Look at the status.conditions field for specific failures
+kubeasy challenge submit <challenge-slug>
 ```
 
-**2. Check operator logs**
-```bash
-# View operator logs
-kubectl logs -n kubeasy-system -l app=challenge-operator --tail=50
+Review the output carefully -- each validation shows whether it passed or failed with a message explaining why.
 
-# Follow logs in real-time
-kubectl logs -n kubeasy-system -l app=challenge-operator -f
-```
-
-**3. Verify resources are as expected**
+**2. Verify resources are as expected**
 ```bash
 # List all resources in the challenge namespace
-kubectl get all -n challenge-<name>
+kubectl get all -n <challenge-slug>
 
 # Check specific resource details
-kubectl describe pod <pod-name> -n challenge-<name>
-kubectl logs <pod-name> -n challenge-<name>
+kubectl describe pod <pod-name> -n <challenge-slug>
+kubectl logs <pod-name> -n <challenge-slug>
 ```
 
-**4. Test validation manually**
+**3. Check conditions**
 ```bash
-# If validation checks for HTTP endpoint, test it manually
-kubectl run -it --rm debug --image=curlimages/curl --restart=Never -n challenge-<name> \
-  -- curl http://service-name:port/path
+kubectl get pod <pod-name> -n <challenge-slug> -o jsonpath='{.status.conditions}'
+```
 
-# If validation checks pod status
-kubectl get pods -n challenge-<name> -o wide
+**4. Test connectivity manually (for connectivity validations)**
+```bash
+kubectl run -it --rm debug --image=curlimages/curl --restart=Never -n <challenge-slug> \
+  -- curl http://service-name:port/path
 ```
 
 ### Kyverno policy blocks legitimate changes
@@ -280,29 +258,12 @@ resource Deployment/my-app violates policy require-resource-limits
 ```
 
 **Solution:**
-The policy violation is intentional - it's part of the validation criteria.
+The policy violation is intentional -- it's part of the challenge's bypass prevention.
 
 **To fix:**
-1. Read the error message carefully - it tells you what's missing
-2. Update your manifest to satisfy the policy
-3. Apply again
-
-**Example:**
-```yaml
-# Before (rejected)
-containers:
-- name: app
-  image: nginx
-
-# After (accepted)
-containers:
-- name: app
-  image: nginx
-  resources:
-    limits:
-      cpu: "100m"
-      memory: "128Mi"
-```
+1. Read the error message carefully -- it tells you what's blocked
+2. Kyverno policies protect specific fields (like container images) to prevent cheating
+3. Focus on fixing the actual problem rather than replacing the application
 
 **View all active policies:**
 ```bash
@@ -317,7 +278,7 @@ kubectl describe clusterpolicy <policy-name>
 **Solution:**
 ```bash
 # Submit your solution
-kubeasy challenge submit <name>
+kubeasy challenge submit <challenge-slug>
 
 # This will:
 # 1. Run all validations
@@ -327,8 +288,8 @@ kubeasy challenge submit <name>
 
 If submission succeeds but progress doesn't update:
 - Check the web platform for validation feedback
-- Some checks might be failing silently
-- Review the validation criteria in the challenge description
+- Some objectives might be failing silently
+- Review the validation output in the CLI
 
 ## Network issues
 
@@ -340,22 +301,22 @@ If submission succeeds but progress doesn't update:
 
 **1. Check service exists**
 ```bash
-kubectl get svc -n challenge-<name>
+kubectl get svc -n <challenge-slug>
 ```
 
 **2. Check endpoints**
 ```bash
 # Endpoints should list pod IPs
-kubectl get endpoints <service-name> -n challenge-<name>
+kubectl get endpoints <service-name> -n <challenge-slug>
 
 # If empty, check pod labels match service selector
-kubectl get pods -n challenge-<name> --show-labels
-kubectl get svc <service-name> -n challenge-<name> -o yaml | grep selector -A 5
+kubectl get pods -n <challenge-slug> --show-labels
+kubectl get svc <service-name> -n <challenge-slug> -o yaml | grep selector -A 5
 ```
 
 **3. Test connectivity from within cluster**
 ```bash
-kubectl run -it --rm debug --image=nicolaka/netshoot --restart=Never -n challenge-<name>
+kubectl run -it --rm debug --image=nicolaka/netshoot --restart=Never -n <challenge-slug>
 
 # From the debug pod:
 curl http://service-name:port
@@ -365,10 +326,10 @@ nslookup service-name
 **4. Check NetworkPolicies**
 ```bash
 # List network policies
-kubectl get networkpolicies -n challenge-<name>
+kubectl get networkpolicies -n <challenge-slug>
 
 # Describe to see rules
-kubectl describe networkpolicy <policy-name> -n challenge-<name>
+kubectl describe networkpolicy <policy-name> -n <challenge-slug>
 ```
 
 ### Pods cannot pull images
@@ -378,27 +339,12 @@ kubectl describe networkpolicy <policy-name> -n challenge-<name>
 **Solution:**
 ```bash
 # Check pod events
-kubectl describe pod <pod-name> -n challenge-<name>
+kubectl describe pod <pod-name> -n <challenge-slug>
 
 # Common causes:
 # 1. Image doesn't exist - check image name
 # 2. Private registry without credentials
 # 3. Rate limit (Docker Hub) - wait or authenticate
-```
-
-**For private images:**
-```bash
-# Create image pull secret
-kubectl create secret docker-registry regcred \
-  --docker-server=<registry> \
-  --docker-username=<username> \
-  --docker-password=<password> \
-  -n challenge-<name>
-
-# Reference in pod spec:
-# spec:
-#   imagePullSecrets:
-#   - name: regcred
 ```
 
 ## Performance issues
@@ -415,7 +361,7 @@ kubectl create secret docker-registry regcred \
 docker stats
 
 # Increase Docker Desktop limits:
-# Docker Desktop → Settings → Resources
+# Docker Desktop -> Settings -> Resources
 # Recommended: 4-8 GB RAM, 2-4 CPUs
 ```
 
@@ -426,29 +372,12 @@ kubectl get pods -A | wc -l
 
 # Clean up old challenges
 kubeasy challenge clean <old-challenge>
-
-# Or clean up all challenge namespaces
-kubectl delete ns -l kubeasy.dev/challenge=true
 ```
 
 **3. Check node status**
 ```bash
 kubectl describe node kubeasy-control-plane
 # Look for memory/CPU pressure warnings
-```
-
-### ArgoCD sync is slow
-
-**Problem:** Challenges take minutes to deploy
-
-**Solution:**
-```bash
-# Check ArgoCD resource usage
-kubectl top pods -n argocd
-
-# Increase ArgoCD resources (if needed)
-kubectl edit deployment argocd-repo-server -n argocd
-# Adjust resources.requests and resources.limits
 ```
 
 ## Data and cleanup issues
@@ -460,16 +389,11 @@ kubectl edit deployment argocd-repo-server -n argocd
 **Solution:**
 ```bash
 # Check what's blocking deletion
-kubectl get namespace challenge-<name> -o yaml
+kubectl get namespace <challenge-slug> -o yaml
 # Look for finalizers
 
 # Force remove finalizers
-kubectl patch namespace challenge-<name> -p '{"metadata":{"finalizers":[]}}' --type=merge
-
-# Or use this script:
-kubectl get namespace challenge-<name> -o json | \
-  jq '.spec.finalizers = []' | \
-  kubectl replace --raw "/api/v1/namespaces/challenge-<name>/finalize" -f -
+kubectl patch namespace <challenge-slug> -p '{"metadata":{"finalizers":[]}}' --type=merge
 ```
 
 ### Reset cluster completely
@@ -497,11 +421,11 @@ kubeasy setup
 **Solution:**
 ```bash
 # CLI config is stored at:
-# ~/.kubeasy/ (Linux/macOS)
-# %USERPROFILE%\.kubeasy\ (Windows)
+# Linux/macOS: ~/.config/kubeasy-cli/
+# Windows: %APPDATA%/kubeasy-cli/
 
 # Remove CLI configuration
-rm -rf ~/.kubeasy
+rm -rf ~/.config/kubeasy-cli
 
 # Log in again
 kubeasy login
@@ -513,23 +437,18 @@ If your issue isn't covered here:
 
 1. **Check the logs**
    ```bash
-   # CLI debug mode
-   kubeasy --debug challenge start <name>
-
-   # Operator logs
-   kubectl logs -n kubeasy-system -l app=challenge-operator
-
-   # ArgoCD logs
-   kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
+   # CLI logs are written to a file - check the log path in the output
+   # Kyverno logs
+   kubectl logs -n kyverno -l app.kubernetes.io/name=kyverno
    ```
 
 2. **Gather diagnostic info**
    ```bash
    # Cluster info
-   kubectl cluster-info dump > cluster-dump.txt
+   kubectl cluster-info
 
    # Challenge state
-   kubectl get all,challengevalidations -n challenge-<name> -o yaml > challenge-state.yaml
+   kubectl get all -n <challenge-slug> -o yaml > challenge-state.yaml
    ```
 
 3. **Ask for help**
@@ -551,13 +470,9 @@ kubectl top nodes
 kubectl top pods -A
 
 # Verify all Kubeasy components are healthy
-kubectl get pods -n argocd
 kubectl get pods -n kyverno
-kubectl get pods -n kubeasy-system
+kubectl get pods -n local-path-storage
 
 # Test DNS resolution
 kubectl run -it --rm debug --image=busybox --restart=Never -- nslookup kubernetes.default
-
-# Export cluster state for debugging
-kubectl get all -A -o yaml > cluster-state.yaml
 ```

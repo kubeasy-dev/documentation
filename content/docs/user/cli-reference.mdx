@@ -8,18 +8,23 @@ The `kubeasy` CLI is the main tool to interact with Kubeasy locally: start chall
 Built with Go and powered by [Cobra](https://cobra.dev/), the CLI is distributed as a single binary with no dependencies.
 
 **Installation:**
-Download the latest release for your platform from [GitHub Releases](https://github.com/kubeasy-dev/kubeasy-cli/releases) or see the [Getting Started guide](/docs/user/getting-started) for detailed installation instructions.
+See the [Getting Started guide](/docs/user/getting-started) for all installation methods (install script, Homebrew, NPM, Scoop, or manual download).
 
 ```bash
 kubeasy version
 ```
 
-## 🔐 Authentication
+## Authentication
 
 ### `kubeasy login`
 
-Authenticate the CLI by pasting your personal API token (generated from the [profile page](/profile)).
-Your token is stored locally to allow secure access to challenge data and submission features.
+Authenticate the CLI by entering your API key (generated from your [profile page](https://kubeasy.dev/profile)).
+The key is stored securely using the best available backend:
+
+1. **System keyring** (macOS Keychain, Windows Credential Manager, Linux Secret Service) -- preferred
+2. **File-based storage** (`~/.config/kubeasy-cli/credentials`) -- fallback for headless environments
+
+You can also set the `KUBEASY_API_KEY` environment variable for CI/CD use.
 
 **Usage:**
 ```bash
@@ -29,29 +34,23 @@ kubeasy login
 **Example:**
 ```
 $ kubeasy login
-Enter your Kubeasy API token: ************************************
-✓ Successfully authenticated as john.doe@example.com
-✓ Token saved to ~/.kubeasy/token
+API Key: ************************************
+API key stored in system keyring
+Welcome John Doe
+Login successful!
 ```
 
-**Options:**
-- `--token <token>` - Provide token via flag instead of interactive prompt
-
-**Example with flag:**
-```bash
-kubeasy login --token "kb_1234567890abcdef"
-```
-
-## ⚙️ Setup
+## Setup
 
 ### `kubeasy setup`
 
 Prepare your local environment for Kubeasy. This command:
 
-- Creates a local Kind cluster (if one doesn't exist)
-- Installs the required components (validators, policies, etc.)
+- Creates a local Kind cluster named `kubeasy` (if one doesn't exist)
+- Installs Kyverno (policy engine for bypass prevention)
+- Installs local-path-provisioner (for PersistentVolume storage)
 
-Usually run once per machine before starting challenges.
+Usually run once per machine before starting challenges. Requires authentication -- run `kubeasy login` first.
 
 **Usage:**
 ```bash
@@ -61,81 +60,81 @@ kubeasy setup
 **Example output:**
 ```
 $ kubeasy setup
-🔍 Checking Docker availability...
-✓ Docker is running
+Kubeasy Environment Setup
 
-🔍 Checking for existing Kind cluster...
-⚙️  Creating Kind cluster 'kubeasy'...
-✓ Cluster created successfully
+Creating kind cluster 'kubeasy' (Kubernetes 1.32)   [12s]
+Installing infrastructure (Kyverno + local-path-provisioner)   [45s]
 
-📦 Installing ArgoCD...
-✓ ArgoCD installed in namespace 'argocd'
-
-📦 Installing Kyverno...
-✓ Kyverno installed in namespace 'kyverno'
-
-📦 Installing Challenge Operator...
-✓ Operator installed in namespace 'kubeasy-system'
-
-⚙️  Configuring kubectl context...
-✓ Context set to 'kind-kubeasy'
-
-✅ Setup complete! You're ready to start challenges.
-   Run 'kubeasy challenge start <challenge-name>' to begin.
+Kubeasy environment is ready!
+You can now start challenges with 'kubeasy challenge start <slug>'
 ```
 
-**Options:**
-- `--skip-cluster` - Skip cluster creation (use existing cluster)
-- `--reset` - Delete and recreate the entire environment
-
-**Troubleshooting:**
-If setup fails, check the [Troubleshooting guide](/docs/user/troubleshooting#cluster-setup-issues).
-
-## 🧩 Challenge management
+## Challenge management
 
 All challenge-related actions are available under the `challenge` subcommand.
+
+### `kubeasy challenge get <challenge>`
+
+View details about a specific challenge before starting it.
+
+**Usage:**
+```bash
+kubeasy challenge get <challenge-slug>
+```
+
+**Example:**
+```
+$ kubeasy challenge get pod-evicted
+
+Pod Evicted
+
+Difficulty: easy
+Theme: resources-scaling
+Slug: pod-evicted
+
+Description:
+A data processing pod keeps crashing and getting evicted.
+It was working fine yesterday, but now Kubernetes keeps killing it.
+
+Initial Situation:
+A data processing application is deployed as a single pod.
+The pod starts but keeps crashing after a few seconds.
+
+Objective:
+Investigate why the pod keeps crashing and fix it so it runs stably.
+```
 
 ### `kubeasy challenge start <challenge>`
 
 Start a challenge. This command:
 
-- Applies the initial manifests into a new dedicated namespace
-- Switches your `kubectl` context to that namespace
-- Prepares everything to begin solving the problem
+- Creates a dedicated namespace for the challenge
+- Pulls the challenge OCI artifact from the registry
+- Applies manifests and Kyverno policies
+- Waits for resources to be ready
+- Switches your `kubectl` context to the challenge namespace
 
 **Usage:**
 ```bash
-kubeasy challenge start <challenge-name>
+kubeasy challenge start <challenge-slug>
 ```
 
 **Example:**
 ```
-$ kubeasy challenge start rbac-basics
-📥 Fetching challenge metadata...
-✓ Challenge 'RBAC Basics: Service Account Permissions' loaded
+$ kubeasy challenge start pod-evicted
+Starting Challenge: pod-evicted
 
-🚀 Deploying challenge resources...
-✓ Namespace 'challenge-rbac-basics' created
-✓ ArgoCD Application created
-✓ Waiting for resources to sync... (10s)
-✓ Resources deployed successfully
+Challenge: Pod Evicted
+Fetching challenge details
+Checking challenge progress
+Creating namespace
+Deploying challenge
+Kubectl context configured
 
-⚙️  Switching kubectl context...
-✓ Context set to namespace 'challenge-rbac-basics'
-
-🎯 Challenge started!
-
-Objective: Fix the RBAC configuration so the pod can access the API
-
-Estimated time: 15 minutes
-Difficulty: Beginner
-
-Hints:
-  • Check pod logs for permission errors
-  • Review the ServiceAccount used by the deployment
-  • Ensure the Role grants necessary API access
-
-Good luck! 🚀
+Challenge environment is ready!
+Challenge: pod-evicted
+Namespace: pod-evicted
+Context: kind-kubeasy
 ```
 
 **After starting:**
@@ -151,184 +150,102 @@ kubectl describe pod <pod-name>
 
 Submit your solution for validation.
 
-- Runs all defined static and dynamic checks
-- Uploads the results to the Kubeasy platform
-- You can then review validation results and feedback via the web interface
+- Loads validation objectives from the challenge definition
+- Executes each validation against the cluster
+- Sends results to the Kubeasy platform
 
 **Usage:**
 ```bash
-kubeasy challenge submit <challenge-name>
+kubeasy challenge submit <challenge-slug>
 ```
 
 **Example (successful submission):**
 ```
-$ kubeasy challenge submit rbac-basics
-🔍 Running validations...
+$ kubeasy challenge submit pod-evicted
+Submitting Challenge: pod-evicted
 
-Static checks (Kyverno):
-  ✓ Resource limits defined
-  ✓ Security context configured
-  ✓ Labels present
+Verifying challenge
+Checking progress
+Loading validations
+Running validations...
 
-Dynamic checks (Operator):
-  ✓ Pod is running (phase: Running)
-  ✓ Service is accessible (HTTP 200)
-  ✓ RBAC permissions granted
+Condition Validation
+  pod-running-check: PASSED - All condition checks passed
 
-📤 Submitting results...
-✓ Results uploaded successfully
+Event Validation
+  no-crash-events: PASSED - No forbidden events found
 
-🎉 Challenge completed! (Score: 100%)
-
-View detailed feedback at:
-https://kubeasy.dev/challenges/rbac-basics/submission/abc123
+Submission Result
+All validations passed!
+Sending results to server...
+Congratulations! Challenge 'pod-evicted' completed!
 ```
 
 **Example (failed validation):**
 ```
-$ kubeasy challenge submit network-policy-debug
-🔍 Running validations...
+$ kubeasy challenge submit pod-evicted
+Running validations...
 
-Static checks (Kyverno):
-  ✓ NetworkPolicy exists
+Condition Validation
+  pod-running-check: FAILED - Condition Ready is False (expected True)
 
-Dynamic checks (Operator):
-  ✓ Pod is running
-  ✗ Frontend cannot reach backend (connection timeout)
-  ✗ Backend can reach database (should be blocked)
+Event Validation
+  no-crash-events: FAILED - Found forbidden event: OOMKilled
 
-📤 Submitting results...
-✓ Results uploaded
-
-❌ Challenge not yet complete (Score: 33%)
-
-Failed checks:
-  • Frontend → Backend connectivity
-    Expected: Connection successful
-    Got: Connection timeout after 5s
-    Hint: Check NetworkPolicy ingress rules
-
-  • Backend → Database connectivity
-    Expected: Connection blocked
-    Got: Connection successful
-    Hint: Add egress NetworkPolicy to restrict backend
-
-View full report at:
-https://kubeasy.dev/challenges/network-policy-debug/submission/xyz789
-```
-
-### `kubeasy challenge get <challenge>`
-
-View details about a specific challenge before starting it.
-
-**Usage:**
-```bash
-kubeasy challenge get <challenge-name>
-```
-
-**Example:**
-```
-$ kubeasy challenge get rbac-basics
-
-╔═══════════════════════════════════════════════════════════╗
-║  RBAC Basics: Service Account Permissions                ║
-╚═══════════════════════════════════════════════════════════╝
-
-Description:
-  A deployment is failing because the ServiceAccount lacks
-  permissions to access the Kubernetes API. Fix the RBAC
-  configuration to allow the pod to function correctly.
-
-Difficulty: Beginner
-Estimated Time: 15 minutes
-Theme: RBAC, Security
-
-Learning Objectives:
-  • Understand ServiceAccount and RBAC concepts
-  • Debug permission errors in pods
-  • Create appropriate Role and RoleBinding
-
-Prerequisites:
-  • Basic understanding of Kubernetes Pods
-  • Familiarity with kubectl commands
-
-Start this challenge:
-  kubeasy challenge start rbac-basics
+Submission Result
+Some validations failed
+Review the results above and try again
 ```
 
 ### `kubeasy challenge reset <challenge>`
 
-Reset the challenge environment by reapplying the initial manifests. This will also reset your progress and delete your submission on the platform.
-Use this if you're stuck or want to start fresh.
+Reset the challenge by removing all resources and resetting your progress on the platform.
+Use this if you want to start completely fresh.
 
 **Usage:**
 ```bash
-kubeasy challenge reset <challenge-name>
+kubeasy challenge reset <challenge-slug>
 ```
 
 **Example:**
 ```
-$ kubeasy challenge reset rbac-basics
-⚠️  This will reset the challenge to its initial state.
-   Your current progress will be lost.
+$ kubeasy challenge reset pod-evicted
+Resetting Challenge: pod-evicted
 
-   Continue? (y/N): y
+Deleting challenge resources   [5s]
+Resetting challenge progress on server
 
-🔄 Resetting challenge...
-✓ Deleted existing resources
-✓ Reapplied initial manifests
-✓ Challenge reset complete
-
-You can now try solving it again from scratch.
-```
-
-**Options:**
-- `--force` - Skip confirmation prompt
-- `--keep-submission` - Reset cluster resources but keep your submission history
-
-**Example with options:**
-```bash
-kubeasy challenge reset rbac-basics --force --keep-submission
+Challenge 'pod-evicted' reset successfully!
+You can start the challenge again with 'kubeasy challenge start pod-evicted'
 ```
 
 ### `kubeasy challenge clean <challenge>`
 
 Clean up all Kubernetes resources related to the challenge, including its namespace.
-This does **not** affect your challenge progress on the platform.
+This does **not** reset your challenge progress on the platform.
 
 **Usage:**
 ```bash
-kubeasy challenge clean <challenge-name>
+kubeasy challenge clean <challenge-slug>
 ```
 
 **Example:**
 ```
-$ kubeasy challenge clean rbac-basics
-🧹 Cleaning up challenge resources...
-✓ Deleted ArgoCD Application
-✓ Deleted namespace 'challenge-rbac-basics'
-✓ Cleanup complete
+$ kubeasy challenge clean pod-evicted
+Cleaning Challenge: pod-evicted
 
-Your challenge progress on the platform remains intact.
+Deleting challenge resources   [5s]
+
+Challenge 'pod-evicted' cleaned successfully!
+All resources have been removed from your cluster
 ```
 
 **When to use:**
 - You've finished the challenge and want to free up resources
-- You want to remove a challenge without resetting your submission
+- You want to remove challenge resources without resetting your submission
 - You're switching to a different challenge
 
-**Clean up all challenges at once:**
-```bash
-# List all active challenges
-kubeasy challenge list --active
-
-# Clean them all
-for challenge in $(kubeasy challenge list --active --format=names); do
-  kubeasy challenge clean $challenge
-done
-```
-
-## 🧠 Shell autocompletion
+## Shell autocompletion
 
 ### `kubeasy completion`
 

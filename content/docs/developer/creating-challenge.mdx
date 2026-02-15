@@ -70,8 +70,9 @@ description: |
   The ops team says it worked fine in development.
 theme: resources-scaling
 difficulty: easy
-estimated_time: 15
-initial_situation: |
+type: fix
+estimatedTime: 15
+initialSituation: |
   A data processing pod is deployed.
   It starts but crashes within seconds.
   The pod enters CrashLoopBackOff state.
@@ -79,18 +80,18 @@ objective: |
   Make the application run stably.
   Understand why Kubernetes keeps killing the pod.
 
-validations:
+objectives:
   - key: pod-ready
     title: "Pod Running"
     description: "The pod must be in Ready state"
     order: 1
-    type: status
+    type: condition
     spec:
       target:
         kind: Pod
         labelSelector:
           app: data-processor
-      conditions:
+      checks:
         - type: Ready
           status: "True"
 
@@ -113,15 +114,15 @@ validations:
     title: "Low Restart Count"
     description: "Pod must not restart excessively"
     order: 3
-    type: metrics
+    type: status
     spec:
       target:
         kind: Pod
         labelSelector:
           app: data-processor
-      metricChecks:
-        - metric: restartCount
-          operator: LessThan
+      checks:
+        - field: "containerStatuses[0].restartCount"
+          operator: "<"
           value: 3
 ```
 
@@ -129,6 +130,7 @@ validations:
 - Description mentions symptoms, not the cause
 - Objective states the goal, not the solution
 - Validation titles are generic (don't reveal the fix)
+- Uses `condition` for Ready check, `event` for stability, `status` for restart count
 
 ## Step 4: Create the Broken Manifests
 
@@ -180,7 +182,7 @@ This deployment will crash because:
 - Kubernetes kills the container when it exceeds the limit
 
 <Callout type="info" title="Need a Custom Image?">
-If inline commands aren't enough, you can create a custom Docker image. Add an `image/` directory with a `Dockerfile` in your challenge folder - the CI will automatically build and publish it to `ghcr.io/kubeasy-dev/<challenge-name>:latest`.
+If inline commands aren't enough, you can create a custom Docker image. Add an `image/` directory with a `Dockerfile` in your challenge folder -- the CI will automatically build and publish it to `ghcr.io/kubeasy-dev/<challenge-name>:latest`.
 
 See [Challenge Structure - Custom Images](/docs/developer/challenge-structure#5-image-directory-optional) for details.
 </Callout>
@@ -221,8 +223,8 @@ This prevents users from replacing the application with a simpler one that uses 
 ### Start the environment
 
 ```bash
-# Initialize Kubeasy (creates Kind cluster + installs components)
-kubeasy init
+# Setup Kubeasy (creates Kind cluster + installs components)
+kubeasy setup
 
 # Login to Kubeasy
 kubeasy login
@@ -238,21 +240,21 @@ kubeasy challenge start memory-pressure
 
 ```bash
 # Check pod status
-kubectl get pods -n challenge-memory-pressure
+kubectl get pods -n memory-pressure
 
 # You should see CrashLoopBackOff
 NAME                              READY   STATUS             RESTARTS   AGE
 data-processor-xxx                0/1     CrashLoopBackOff   3          2m
 
 # Check events
-kubectl describe pod -n challenge-memory-pressure -l app=data-processor
+kubectl describe pod -n memory-pressure -l app=data-processor
 # Look for OOMKilled
 ```
 
 ### Apply the fix
 
 ```bash
-kubectl patch deployment data-processor -n challenge-memory-pressure \
+kubectl patch deployment data-processor -n memory-pressure \
   --type='json' -p='[
     {"op": "replace", "path": "/spec/template/spec/containers/0/resources/limits/memory", "value": "128Mi"},
     {"op": "replace", "path": "/spec/template/spec/containers/0/resources/requests/memory", "value": "64Mi"}
@@ -266,7 +268,7 @@ kubectl patch deployment data-processor -n challenge-memory-pressure \
 sleep 30
 
 # Check pod is running
-kubectl get pods -n challenge-memory-pressure
+kubectl get pods -n memory-pressure
 # Should show Running, not CrashLoopBackOff
 ```
 
@@ -366,5 +368,6 @@ Don't combine multiple unrelated issues. One concept per challenge.
 ## Next Steps
 
 - Read [Validation Rules](/docs/developer/validation-rules) for more validation types
+- See [Validation Reference](/docs/developer/validation-reference) for complete type specifications
 - See [Challenge Structure](/docs/developer/challenge-structure) for complete reference
 - Review existing challenges for inspiration

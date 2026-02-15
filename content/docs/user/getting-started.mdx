@@ -3,8 +3,8 @@ title: Getting Started
 description: Install the Kubeasy CLI, set up your environment, and solve your first challenge in minutes.
 ---
 
-Ready to dive into your first Kubernetes challenge with Kubeasy?  
-This guide will walk you through the full setup — from prerequisites to your first submission.
+Ready to dive into your first Kubernetes challenge with Kubeasy?
+This guide will walk you through the full setup -- from prerequisites to your first submission.
 
 ## Prerequisites
 
@@ -17,28 +17,38 @@ Make sure you have the following installed on your machine:
 
 ### 1. Install the Kubeasy CLI
 
-Download the latest release from [GitHub Releases](https://github.com/kubeasy-dev/kubeasy-cli/releases):
+Choose the installation method that works best for you.
+
+**Install script (macOS / Linux):**
+
+The fastest way to install. Automatically detects your OS and architecture:
 
 ```bash
-# macOS (Intel)
-curl -LO https://github.com/kubeasy-dev/kubeasy-cli/releases/latest/download/kubeasy-darwin-amd64
-chmod +x kubeasy-darwin-amd64
-sudo mv kubeasy-darwin-amd64 /usr/local/bin/kubeasy
-
-# macOS (Apple Silicon)
-curl -LO https://github.com/kubeasy-dev/kubeasy-cli/releases/latest/download/kubeasy-darwin-arm64
-chmod +x kubeasy-darwin-arm64
-sudo mv kubeasy-darwin-arm64 /usr/local/bin/kubeasy
-
-# Linux
-curl -LO https://github.com/kubeasy-dev/kubeasy-cli/releases/latest/download/kubeasy-linux-amd64
-chmod +x kubeasy-linux-amd64
-sudo mv kubeasy-linux-amd64 /usr/local/bin/kubeasy
-
-# Windows (PowerShell)
-# Download from https://github.com/kubeasy-dev/kubeasy-cli/releases/latest
-# Add the binary to your PATH
+curl -fsSL https://download.kubeasy.dev/install.sh | sh
 ```
+
+**Homebrew (macOS / Linux):**
+
+```bash
+brew install kubeasy-dev/tap/kubeasy
+```
+
+**NPM:**
+
+```bash
+npm install -g @kubeasy-dev/kubeasy-cli
+```
+
+**Scoop (Windows):**
+
+```bash
+scoop bucket add kubeasy https://github.com/kubeasy-dev/scoop-bucket
+scoop install kubeasy
+```
+
+**Manual download:**
+
+Download the binary for your platform from [GitHub Releases](https://github.com/kubeasy-dev/kubeasy-cli/releases) and add it to your PATH.
 
 Verify the installation:
 
@@ -46,10 +56,10 @@ Verify the installation:
 kubeasy version
 ```
 
-### 2. Generate your API Token
+### 2. Generate your API Key
 
-Go to your Kubeasy profile and generate a personal access token.
-This token allows the CLI to fetch available challenges and submit your results.
+Go to your [Kubeasy profile](https://kubeasy.dev/profile) and generate a personal API key.
+This key allows the CLI to fetch available challenges and submit your results.
 
 ### 3. Login to Kubeasy
 
@@ -57,7 +67,9 @@ This token allows the CLI to fetch available challenges and submit your results.
 kubeasy login
 ```
 
-Paste the token when prompted. You’re now authenticated.
+Enter your API key when prompted. The key is stored securely in your system keyring (macOS Keychain, Windows Credential Manager, or Linux Secret Service). On headless environments, it falls back to `~/.config/kubeasy-cli/credentials`.
+
+You can also set the `KUBEASY_API_KEY` environment variable for CI/CD use.
 
 ### 4. Set up the local environment
 
@@ -67,59 +79,73 @@ kubeasy setup
 
 This will:
 
-- Create a Kind Kubernetes cluster (if it doesn't exist yet)
-- Install required components (validators, policies, etc.)
+- Create a Kind Kubernetes cluster named `kubeasy` (if it doesn't exist yet)
+- Install required infrastructure components (Kyverno, local-path-provisioner)
 
 You only need to run this once on a machine.
 
 ### 5. Pick a challenge
 
-Visit the [challenge list](/challenges) and choose one that interests you.
+Visit the [challenge list](https://kubeasy.dev/challenges) and choose one that interests you.
 Each challenge comes with a short description, difficulty, and estimated time.
+
+You can also view challenge details from the CLI:
+
+```bash
+kubeasy challenge get <challenge-slug>
+```
 
 ### 6. Start the challenge
 
 ```bash
-kubeasy challenge start <challenge-name>
+kubeasy challenge start <challenge-slug>
 ```
 
 This command will:
 
-- Apply the initial manifests (representing the broken scenario)
 - Create a dedicated namespace for the challenge
-- Automatically switch your kubectl context to that namespace
+- Pull and deploy the challenge manifests (broken scenario)
+- Apply Kyverno policies to prevent bypasses
+- Switch your kubectl context to the challenge namespace
 
 ### 7. Play and fix the challenge
 
-Use kubectl, logs, and events to investigate what’s wrong.
+Use kubectl, logs, and events to investigate what's wrong.
 
-You can edit objects, apply new resources, and debug freely — just like in a real cluster.
+You can edit objects, apply new resources, and debug freely -- just like in a real cluster.
 
 ### 8. Submit your solution
 
 ```bash
-kubeasy challenge submit <challenge-name>
+kubeasy challenge submit <challenge-slug>
 ```
 
 The CLI will:
 
-- Run a series of validations (static and dynamic)
-- Upload your submission result to the platform
+- Load validation objectives from the challenge definition
+- Execute each validation against the cluster
+- Send structured results to the platform
 
 ### 9. Review your submission
 
 Go to the web platform to see:
 
-- Which tests passed or failed
+- Which objectives passed or failed
 - Helpful messages for failed checks
 - Whether the challenge is considered complete
 
 ### 10. (optional) Clean up
 
 ```bash
-kubeasy challenge clean <challenge-name>
+kubeasy challenge clean <challenge-slug>
 ```
 
-This removes all resources created for the challenge — including the namespace.
+This removes all resources created for the challenge, including the namespace.
 
-That’s it! You’re ready to start learning Kubernetes by solving real problems.
+If you want to start over (including resetting your progress on the platform):
+
+```bash
+kubeasy challenge reset <challenge-slug>
+```
+
+That's it! You're ready to start learning Kubernetes by solving real problems.

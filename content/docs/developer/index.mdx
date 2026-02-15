@@ -13,9 +13,9 @@ A Kubeasy challenge is a **self-contained, broken Kubernetes scenario** that lea
 
 Each challenge consists of:
 - **Initial manifests** - The broken or incomplete Kubernetes resources
-- **Validation rules** - Criteria that define what "solved" means
+- **Validation objectives** - Criteria that define what "solved" means
 - **Metadata** - Title, description, difficulty, estimated time
-- **Documentation** - Context and learning objectives (optional)
+- **Bypass protection** - Kyverno policies to prevent cheating
 
 ## Quick overview
 
@@ -23,9 +23,10 @@ Creating a challenge involves:
 
 1. **Design the scenario** - Identify a realistic Kubernetes problem to teach
 2. **Write the manifests** - Create the broken initial state
-3. **Define validation** - Specify what "fixed" looks like
-4. **Test locally** - Ensure the challenge works as expected
-5. **Submit** - Open a pull request to the challenges repository
+3. **Define objectives** - Specify what "fixed" looks like
+4. **Add bypass protection** - Kyverno policies to prevent shortcuts
+5. **Test locally** - Ensure the challenge works as expected
+6. **Submit** - Open a pull request to the challenges repository
 
 ## Who is this guide for?
 
@@ -47,9 +48,9 @@ This guide covers:
 - **[Challenge Structure](/docs/developer/challenge-structure)** - Understanding the anatomy of a challenge
 - **[Creating Challenges](/docs/developer/creating-challenge)** - Step-by-step guide to building your first challenge
 - **[Validation Rules](/docs/developer/validation-rules)** - How to define success criteria
+- **[Validation Reference](/docs/developer/validation-reference)** - Complete validation type specifications
 - **[Testing](/docs/developer/testing-challenges)** - Testing challenges locally before submission
 - **[Contributing](/docs/developer/contributing)** - Guidelines for submitting challenges to the official repository
-- **[Operator API](/docs/developer/operator-api)** - Technical reference for the Challenge Operator
 
 ## Repository structure
 
@@ -58,9 +59,9 @@ The Kubeasy ecosystem consists of several repositories:
 | Repository | Purpose |
 |------------|---------|
 | [challenges](https://github.com/kubeasy-dev/challenges) | Challenge definitions and manifests |
-| [challenge-operator](https://github.com/kubeasy-dev/challenge-operator) | Kubernetes operator for validation |
-| [kubeasy-cli](https://github.com/kubeasy-dev/kubeasy-cli) | CLI tool for local development |
+| [kubeasy-cli](https://github.com/kubeasy-dev/kubeasy-cli) | CLI tool for local development and validation |
 | [website](https://github.com/kubeasy-dev/website) | Web platform and API |
+| [documentation](https://github.com/kubeasy-dev/documentation) | Documentation website (this site) |
 
 ## Getting help
 

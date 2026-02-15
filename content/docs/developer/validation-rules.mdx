@@ -3,7 +3,7 @@ title: Validation Rules
 description: How to define success criteria for challenges using the CLI-based validation system.
 ---
 
-Validation rules define when a challenge is considered "solved". Kubeasy uses a **CLI-based validation system** where validations are defined in `challenge.yaml` and executed directly against the Kubernetes cluster.
+Validation rules define when a challenge is considered "solved". Kubeasy uses a **CLI-based validation system** where objectives are defined in `challenge.yaml` and executed directly against the Kubernetes cluster.
 
 ## Philosophy: Validate Outcomes, Not Implementations
 
@@ -29,15 +29,15 @@ This allows multiple valid solutions and doesn't spoil the learning experience.
 
 | Type | Purpose | Example Use Case |
 |------|---------|------------------|
-| `status` | Check resource conditions | Pod Ready, Deployment Available |
+| `condition` | Check resource conditions | Pod Ready, Deployment Available |
+| `status` | Check status fields with operators | Restart count < 3, replicas >= 2 |
 | `log` | Find strings in container logs | "Connected to database", "Server started" |
 | `event` | Detect forbidden K8s events | No OOMKilled, no Evicted |
-| `metrics` | Check pod/deployment metrics | Restart count < 3, replicas >= 2 |
 | `connectivity` | HTTP connectivity tests | Service responds with 200 |
 
-## Defining Validations
+## Defining Objectives
 
-All validations are defined in the `validations` section of `challenge.yaml`:
+All objectives are defined in the `objectives` section of `challenge.yaml`:
 
 ```yaml
 title: Pod Evicted
@@ -45,12 +45,12 @@ description: |
   A pod keeps crashing...
 # ... other metadata
 
-validations:
+objectives:
   - key: unique-identifier
     title: "User-Friendly Title"
     description: "What this checks (not how to fix it)"
     order: 1
-    type: status
+    type: condition
     spec:
       # Type-specific configuration
 ```
@@ -59,31 +59,44 @@ validations:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `key` | Yes | Unique identifier for this validation |
+| `key` | Yes | Unique identifier for this objective |
 | `title` | Yes | Short title shown in the UI |
-| `description` | Yes | What this validation checks |
+| `description` | Yes | What this objective checks |
 | `order` | No | Display order (lower = first) |
-| `type` | Yes | One of: status, log, event, metrics, connectivity |
+| `type` | Yes | One of: `condition`, `status`, `log`, `event`, `connectivity` |
 | `spec` | Yes | Type-specific configuration |
+
+### Target Specification
+
+All validation types use a `target` to specify which resources to check:
+
+```yaml
+spec:
+  target:
+    kind: Pod              # Required: Resource kind
+    name: my-pod           # Optional: Specific resource by name
+    labelSelector:         # Optional: Match by labels
+      app: my-app
+```
 
 ## Validation Examples
 
-### Status Validation
+### Condition Validation
 
-Check if a resource has specific conditions (Ready, Available, etc.)
+Check if a resource has specific Kubernetes conditions (Ready, Available, etc.)
 
 ```yaml
 - key: pod-ready-check
   title: "Pod Ready"
   description: "The application pod must be running and healthy"
   order: 1
-  type: status
+  type: condition
   spec:
     target:
       kind: Pod
       labelSelector:
         app: my-app
-    conditions:
+    checks:
       - type: Ready
         status: "True"
 ```
@@ -95,14 +108,64 @@ Check if a resource has specific conditions (Ready, Available, etc.)
   title: "Deployment Available"
   description: "All replicas must be available"
   order: 1
+  type: condition
+  spec:
+    target:
+      kind: Deployment
+      name: my-deployment
+    checks:
+      - type: Available
+        status: "True"
+```
+
+**Common conditions:**
+- Pod: `Ready`, `ContainersReady`, `PodScheduled`
+- Deployment: `Available`, `Progressing`
+- Job: `Complete`, `Failed`
+
+### Status Validation
+
+Check resource status fields using operators. Use this for numeric or string comparisons on any status field.
+
+```yaml
+- key: low-restarts
+  title: "Low Restart Count"
+  description: "Pod must be stable without excessive restarts"
+  order: 2
+  type: status
+  spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
+    checks:
+      - field: "containerStatuses[0].restartCount"
+        operator: "<"
+        value: 3
+```
+
+**Available operators:** `==`, `!=`, `>`, `<`, `>=`, `<=`
+
+**Field path syntax:**
+- Simple: `phase`, `readyReplicas`
+- Array index: `containerStatuses[0].restartCount`
+- Array filter: `conditions[type=Ready].status`
+
+**Checking replica counts:**
+
+```yaml
+- key: replicas-check
+  title: "Correct Replicas"
+  description: "Deployment must have the expected number of replicas"
   type: status
   spec:
     target:
       kind: Deployment
       name: my-deployment
-    conditions:
-      - type: Available
-        status: "True"
+    checks:
+      - field: "readyReplicas"
+        operator: ">="
+        value: 2
 ```
 
 ### Log Validation
@@ -137,11 +200,13 @@ Find expected strings in container logs.
       kind: Pod
       labelSelector:
         app: my-app
-    containerName: sidecar
+    container: sidecar
     expectedStrings:
       - "Sidecar initialized"
     sinceSeconds: 60
 ```
+
+Default `sinceSeconds` is 300 (5 minutes) if not specified.
 
 ### Event Validation
 
@@ -166,38 +231,25 @@ Detect forbidden Kubernetes events (useful for checking stability).
     sinceSeconds: 300
 ```
 
-### Metrics Validation
+Default `sinceSeconds` is 300 (5 minutes) if not specified.
 
-Check pod or deployment metrics like restart count.
-
-```yaml
-- key: low-restarts
-  title: "Low Restart Count"
-  description: "Pod must be stable without excessive restarts"
-  order: 4
-  type: metrics
-  spec:
-    target:
-      kind: Pod
-      labelSelector:
-        app: my-app
-    metricChecks:
-      - metric: restartCount
-        operator: LessThan
-        value: 3
-```
-
-**Available operators:** `LessThan`, `GreaterThan`, `Equals`
+**Common forbidden reasons:**
+- `OOMKilled` -- Out of memory
+- `CrashLoopBackOff` -- Container keeps crashing
+- `Evicted` -- Pod evicted from node
+- `FailedScheduling` -- Cannot schedule pod
+- `BackOff` -- Back-off restarting
+- `FailedMount` -- Volume mount failed
 
 ### Connectivity Validation
 
-Test HTTP connectivity between pods.
+Test HTTP connectivity from a source pod to a target URL.
 
 ```yaml
 - key: service-reachable
   title: "Service Connectivity"
   description: "The backend must be reachable"
-  order: 6
+  order: 4
   type: connectivity
   spec:
     sourcePod:
@@ -228,15 +280,19 @@ Test HTTP connectivity between pods.
         timeoutSeconds: 5
 ```
 
+Default `timeoutSeconds` is 5 if not specified.
+
+Use `expectedStatusCode: 0` to test that a connection is blocked (e.g., by a NetworkPolicy).
+
 ## Kyverno Policies
 
 Kyverno policies prevent users from **bypassing the challenge** (e.g., replacing the broken app with a working one).
 
 ### What to Protect
 
-- **Container images** - Prevent replacing the application
-- **Critical volume mounts** - Prevent removing problematic configs
-- **Essential labels** - Ensure validations can find resources
+- **Container images** -- Prevent replacing the application
+- **Critical volume mounts** -- Prevent removing problematic configs
+- **Essential labels** -- Ensure validations can find resources
 
 ### Example Policy
 
@@ -277,7 +333,7 @@ Users should be free to:
 
 ## Complete Example
 
-Here's a complete `challenge.yaml` with multiple validations:
+Here's a complete `challenge.yaml` with multiple objectives:
 
 ```yaml
 title: Pod Evicted
@@ -286,8 +342,9 @@ description: |
   It was working fine yesterday, but now Kubernetes keeps killing it.
 theme: resources-scaling
 difficulty: easy
-estimated_time: 15
-initial_situation: |
+type: fix
+estimatedTime: 15
+initialSituation: |
   A data processing application is deployed as a single pod.
   The pod starts successfully but after a few seconds gets killed.
   It enters a CrashLoopBackOff state and keeps restarting.
@@ -295,18 +352,18 @@ objective: |
   Fix the pod so it can run without being evicted.
   Understand why Kubernetes is killing the application.
 
-validations:
+objectives:
   - key: pod-running
     title: "Pod Ready"
     description: "The data-processor pod must be running and healthy"
     order: 1
-    type: status
+    type: condition
     spec:
       target:
         kind: Pod
         labelSelector:
           app: data-processor
-      conditions:
+      checks:
         - type: Ready
           status: "True"
 
@@ -329,15 +386,15 @@ validations:
     title: "Stable Operation"
     description: "The pod must not restart excessively"
     order: 3
-    type: metrics
+    type: status
     spec:
       target:
         kind: Pod
         labelSelector:
           app: data-processor
-      metricChecks:
-        - metric: restartCount
-          operator: LessThan
+      checks:
+        - field: "containerStatuses[0].restartCount"
+          operator: "<"
           value: 3
 ```
 
@@ -382,21 +439,26 @@ validations:
   title: "Application Authenticated"
   type: log
   spec:
+    target:
+      kind: Pod
+      labelSelector:
+        app: my-app
     expectedStrings:
       - "Authentication successful"
 ```
 
 ## How Validation Works
 
-1. **User starts challenge** → CLI deploys manifests via ArgoCD
-2. **User works on the fix** → Modifies resources with kubectl
-3. **User submits** → CLI loads validations from `challenge.yaml`
-4. **CLI executes validations** → Runs each check against the cluster
-5. **Results sent to backend** → Backend verifies all objectives present
-6. **XP awarded** → If all validations pass
+1. **User starts challenge** -- CLI deploys manifests via OCI artifact
+2. **User works on the fix** -- Modifies resources with kubectl
+3. **User submits** -- CLI loads objectives from `challenge.yaml`
+4. **CLI executes validations** -- Runs each check against the cluster
+5. **Results sent to backend** -- Backend verifies all objectives present
+6. **XP awarded** -- If all validations pass
 
 ## Next Steps
 
+- See [Validation Reference](/docs/developer/validation-reference) for complete type specifications
 - See [Challenge Structure](/docs/developer/challenge-structure) for the complete challenge format
 - Learn [Creating Your First Challenge](/docs/developer/creating-challenge) step by step
 - Review [Testing Challenges](/docs/developer/testing-challenges) for verification

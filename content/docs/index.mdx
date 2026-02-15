@@ -9,7 +9,7 @@ Kubeasy is an interactive learning platform that helps developers master Kuberne
 
 ## What is Kubeasy?
 
-Kubeasy drops you into broken Kubernetes scenarios — maybe a pod won't start, RBAC is blocking access, or a network policy is too restrictive. Your goal? **Investigate, fix, and validate** using real tools like `kubectl`.
+Kubeasy drops you into broken Kubernetes scenarios -- maybe a pod won't start, RBAC is blocking access, or a network policy is too restrictive. Your goal? **Investigate, fix, and validate** using real tools like `kubectl`.
 
 No browser playgrounds. No multiple-choice questions. Just you, your terminal, and realistic problems to solve.
 
@@ -24,7 +24,7 @@ Learn how to use Kubeasy to practice Kubernetes skills:
 - **[CLI Reference](/docs/user/cli-reference)** - Complete command reference
 - **[Troubleshooting](/docs/user/troubleshooting)** - Fix common issues
 
-**[→ Start with the User Guide](/docs/user)**
+**[-> Start with the User Guide](/docs/user)**
 
 ### For Developers
 
@@ -33,11 +33,11 @@ Learn how to create and contribute challenges:
 - **[Challenge Structure](/docs/developer/challenge-structure)** - Anatomy of a challenge
 - **[Creating Challenges](/docs/developer/creating-challenge)** - Build your first challenge
 - **[Validation Rules](/docs/developer/validation-rules)** - Define success criteria
+- **[Validation Reference](/docs/developer/validation-reference)** - Complete validation type specs
 - **[Testing](/docs/developer/testing-challenges)** - Test challenges locally
 - **[Contributing](/docs/developer/contributing)** - Submission guidelines
-- **[Operator API](/docs/developer/operator-api)** - Technical reference
 
-**[→ Start with the Developer Guide](/docs/developer)**
+**[-> Start with the Developer Guide](/docs/developer)**
 
 ## Key features
 
@@ -51,31 +51,35 @@ Use `kubectl`, Lens, or any tool you prefer. The challenges run on actual Kubern
 
 ### Automated validation
 
-Challenges validate themselves using:
-- **Kyverno** - Prevents cheating by blocking invalid shortcuts
-- **Static validation** - Checks resource configuration with Rego
-- **Dynamic validation** - Verifies runtime behavior (logs, status, RBAC)
+The CLI validates your solutions directly against the cluster using 5 validation types:
+- **Condition** - Checks resource conditions (Ready, Available)
+- **Status** - Checks status fields with operators (restart count < 3)
+- **Log** - Searches container logs for expected strings
+- **Event** - Detects forbidden events (OOMKilled, Evicted)
+- **Connectivity** - Tests HTTP connectivity between pods
+
+Kyverno policies prevent bypasses by blocking invalid shortcuts.
 
 ### Progressive learning
 
-Challenges range from beginner-friendly RBAC scenarios to advanced multi-component debugging.
+Challenges range from beginner-friendly scenarios to advanced multi-component debugging.
 
 ## Quick start
 
 ### For learners
 
 ```bash
-# Install the CLI
-npm install -g @kubeasy-dev/kubeasy-cli
+# Download the CLI from GitHub Releases
+# https://github.com/kubeasy-dev/kubeasy-cli/releases
 
-# Login with your API token
+# Login with your API key
 kubeasy login
 
 # Setup your local environment
 kubeasy setup
 
 # Start a challenge
-kubeasy challenge start rbac-basics
+kubeasy challenge start pod-evicted
 ```
 
 ### For contributors
@@ -86,19 +90,18 @@ git clone https://github.com/kubeasy-dev/challenges.git
 cd challenges
 
 # Create your challenge
-mkdir my-challenge
-cd my-challenge
-mkdir -p manifests validation/{kyverno,static,dynamic}
+mkdir -p my-challenge/manifests
+mkdir -p my-challenge/policies
 
-# Test it
+# Create challenge.yaml with metadata and objectives
+# Test it locally
 kubeasy setup
-kubectl apply -f manifests/
-kubectl apply -f validation/
+kubeasy challenge start my-challenge
 ```
 
 ## Philosophy
 
-Kubeasy believes the best way to learn Kubernetes is through **practice, not theory**. By simulating real issues in isolated environments, you can safely explore, break things, and rebuild — developing a deeper understanding of how Kubernetes actually works.
+Kubeasy believes the best way to learn Kubernetes is through **practice, not theory**. By simulating real issues in isolated environments, you can safely explore, break things, and rebuild -- developing a deeper understanding of how Kubernetes actually works.
 
 ## Getting help
 
@@ -108,10 +111,6 @@ Kubeasy believes the best way to learn Kubernetes is through **practice, not the
 
 ## What's next?
 
-- **New to Kubeasy?** → [User Guide](/docs/user)
-- **Want to contribute?** → [Developer Guide](/docs/developer)
-- **Need help?** → [Troubleshooting](/docs/user/troubleshooting)
-
----
-
-Happy learning! 🚀
+- **New to Kubeasy?** -> [User Guide](/docs/user)
+- **Want to contribute?** -> [Developer Guide](/docs/developer)
+- **Need help?** -> [Troubleshooting](/docs/user/troubleshooting)
